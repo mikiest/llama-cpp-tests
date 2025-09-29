@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import pLimit from 'p-limit';
 import prettier from 'prettier';
 import type { WorkPlan } from './planner.js';
 import type { ModelWrapper } from './model.js';
@@ -16,7 +15,6 @@ export async function generateWithAgent(
     projectRoot: string;
     outDir: string;
     force: boolean;
-    concurrency: number;
     debug?: boolean;
     renderer: 'rtl-web' | 'rtl-native' | 'none';
     framework: 'jest' | 'vitest';
@@ -24,74 +22,77 @@ export async function generateWithAgent(
     onProgress?: (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'; file: string; chunkId?: string; message?: string }) => void;
   }
 ) {
-  const limit = pLimit(Math.max(1, opts.concurrency));
-  const jobs: Array<Promise<void>> = [];
-
   for (const item of plan.items) {
     if (!item.chunks.length) {
       opts.onProgress?.({ type: 'skip', file: item.rel, message: 'No viable chunks' });
       continue;
     }
     for (const chunk of item.chunks) {
-      jobs.push(limit(async () => {
-        opts.onProgress?.({ type: 'start', file: item.rel, chunkId: chunk.id, message: String(chunk.approxTokens) });
+      opts.onProgress?.({ type: 'start', file: item.rel, chunkId: chunk.id, message: String(chunk.approxTokens) });
 
-        const planPrompt = buildPlanPrompt({
-          relPath: item.rel,
-          codeChunk: chunk.code,
-          renderer: opts.renderer,
-          framework: opts.framework
-        });
+      const planPrompt = buildPlanPrompt({
+        relPath: item.rel,
+        codeChunk: chunk.code,
+        renderer: opts.renderer,
+        framework: opts.framework
+      });
 
-        const agentResult = await runAgent(model, planPrompt, {
-          projectRoot: opts.projectRoot,
-          scan: opts.scan,
-          maxSteps: 4,
-          onTool: ({ step, tool, args }) => {
-            const detail = (args?.relPath || args?.identifier || args?.component || '');
-            opts.onProgress?.({ type: 'tool', file: item.rel, chunkId: chunk.id, message: `${tool} ${detail}` });
-          },
-        });
+      const agentResult = await runAgent(model, planPrompt, {
+        projectRoot: opts.projectRoot,
+        scan: opts.scan,
+        maxSteps: 4,
+        onTool: ({ tool, args }) => {
+          const detail = (args?.relPath || args?.identifier || args?.component || '');
+          opts.onProgress?.({ type: 'tool', file: item.rel, chunkId: chunk.id, message: `${tool} ${detail}` });
+        },
+      });
 
-        if (!agentResult.ok || !agentResult.plan || agentResult.plan.length === 0) {
-          opts.onProgress?.({ type: 'skip', file: item.rel, chunkId: chunk.id, message: 'Empty plan' });
-          return;
-        }
+      if (!agentResult.ok || !agentResult.plan || agentResult.plan.length === 0) {
+        opts.onProgress?.({ type: 'skip', file: item.rel, chunkId: chunk.id, message: 'Empty plan' });
+        continue;
+      }
 
-        const testsPrompt = buildTestsPrompt({
-          relPath: item.rel,
-          codeChunk: chunk.code,
-          testPlanJson: JSON.stringify(agentResult.plan),
-          renderer: opts.renderer,
-          framework: opts.framework
-        });
+      const testsPrompt = buildTestsPrompt({
+        relPath: item.rel,
+        codeChunk: chunk.code,
+        testPlanJson: JSON.stringify(agentResult.plan),
+        renderer: opts.renderer,
+        framework: opts.framework
+      });
 
-        const raw = await model.complete(testsPrompt, { maxTokens: 900, temperature: 0.1 });
-        const code = extractCodeBlock(raw);
-        if (!code) {
-          opts.onProgress?.({ type: 'skip', file: item.rel, chunkId: chunk.id, message: 'Model returned no code' });
-          return;
-        }
-        const formatted = await tryFormat(code);
-        const outPath = resolveOutPath(opts.outDir, item.rel);
-        await fs.mkdir(path.dirname(outPath), { recursive: true });
-        if (!opts.force) {
-          try { await fs.access(outPath); opts.onProgress?.({ type: 'exists', file: item.rel, chunkId: chunk.id }); return; } catch {}
-        }
-        await fs.writeFile(outPath, formatted, 'utf-8');
+      const raw = await model.complete(testsPrompt, { maxTokens: 900, temperature: 0.1 });
+      const code = extractCodeBlock(raw);
+      if (!code) {
+        opts.onProgress?.({ type: 'skip', file: item.rel, chunkId: chunk.id, message: 'Model returned no code' });
+        continue;
+      }
+      const formatted = await tryFormat(code);
+      const outPath = resolveOutPath(opts.outDir, item.rel);
+      await fs.mkdir(path.dirname(outPath), { recursive: true });
+      if (!opts.force) {
+        try {
+          await fs.access(outPath);
+          opts.onProgress?.({ type: 'exists', file: item.rel, chunkId: chunk.id });
+          continue;
+        } catch {}
+      }
+      await fs.writeFile(outPath, formatted, 'utf-8');
 
-        const tests = countTests(formatted);
-        const hints = detectHints(formatted).join(', ');
-        opts.onProgress?.({ type: 'write', file: item.rel, chunkId: chunk.id, message: `${tests}|${hints}` });
-      }));
+      const tests = countTests(formatted);
+      const hints = detectHints(formatted).join(', ');
+      opts.onProgress?.({ type: 'write', file: item.rel, chunkId: chunk.id, message: `${tests}|${hints}` });
     }
   }
-  await Promise.all(jobs);
 }
 
 function resolveOutPath(outDir: string, rel: string): string {
-  const baseName = rel.replace(/\.(tsx|ts|jsx|js)$/i, '.test.$1');
-  return path.join(outDir, path.basename(baseName));
+  const relDir = path.dirname(rel);
+  const ext = path.extname(rel);
+  const normalizedExt = ['.ts', '.tsx', '.js', '.jsx'].includes(ext.toLowerCase()) ? ext : '.ts';
+  const baseName = path.basename(rel, ext);
+  const testFile = `${baseName}.test${normalizedExt}`;
+  const destDir = relDir === '.' ? '' : relDir;
+  return path.join(outDir, destDir, '__tests__', testFile);
 }
 
 function extractCodeBlock(text: string): string | null {

@@ -197,7 +197,6 @@ export async function runAgent(model: ModelWrapper, userPrompt: string, ctx: Age
   ].join('\\n');
 
   const functions = buildSessionFunctions(ctx);
-
   // Single pass: the model will call tools as needed, then answer with plan JSON.
   const out = await model.complete(`${sys}\n\nUser task:\n${userPrompt}`, {
     functions,

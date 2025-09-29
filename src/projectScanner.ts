@@ -16,6 +16,8 @@ const DEFAULT_EXCLUDE = [
   '**/__snapshots__/**',
 ];
 
+const DEFAULT_INCLUDE = ['src/**/*.{ts,tsx,js,jsx}'];
+
 export async function scanProject(root: string, opts: {
   include?: string[];
   exclude?: string[];
@@ -25,7 +27,7 @@ export async function scanProject(root: string, opts: {
 }): Promise<ScanResult> {
   const ig = ignore();
   try { ig.add(await fs.readFile(path.join(root, '.gitignore'), 'utf-8')); } catch {}
-  const patterns = opts.include?.length ? opts.include : ['**/*.{ts,tsx,js,jsx}'];
+  const patterns = opts.include?.length ? opts.include : DEFAULT_INCLUDE;
   const entries = await fg(patterns, { cwd: root, dot: false, ignore: [...DEFAULT_EXCLUDE, ...(opts.exclude ?? [])] });
 
   const files: SourceFile[] = [];

@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import pLimit from 'p-limit';
 import prettier from 'prettier';
 import { WorkPlan } from './planner.js';
 import { buildPrompt } from './prompt.js';
@@ -11,57 +10,59 @@ export async function generateTestsForPlan(model: ModelWrapper, plan: WorkPlan, 
   projectRoot: string;
   outDir: string;
   force: boolean;
-  concurrency: number;
   debug?: boolean;
   onProgress?: (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'|'error'; file: string; chunkId?: string; message?: string }) => void;
 }) {
-  const limit = pLimit(Math.max(1, opts.concurrency));
-  const jobs: Array<Promise<void>> = [];
-
   for (const item of plan.items) {
     if (!item.chunks.length) {
       opts.onProgress?.({ type: 'skip', file: item.rel, message: item.skipReason });
       continue;
     }
     for (const chunk of item.chunks) {
-      jobs.push(limit(async () => {
-        opts.onProgress?.({ type: 'start', file: item.rel, chunkId: chunk.id, message: String(chunk.approxTokens) });
+      opts.onProgress?.({ type: 'start', file: item.rel, chunkId: chunk.id, message: String(chunk.approxTokens) });
 
-        let codeForPrompt = chunk.code;
-        let prompt = buildPrompt({ framework: plan.framework, renderer: plan.renderer, relPath: item.rel, codeChunk: codeForPrompt });
-        const budget = plan.ctxBudget - 128; // leave headroom
-        if (estimateTokens(prompt) > budget) {
-          codeForPrompt = slimCode(codeForPrompt, Math.max(128, Math.floor(budget * 0.8)));
-          prompt = buildPrompt({ framework: plan.framework, renderer: plan.renderer, relPath: item.rel, codeChunk: codeForPrompt });
-        }
+      let codeForPrompt = chunk.code;
+      let prompt = buildPrompt({ framework: plan.framework, renderer: plan.renderer, relPath: item.rel, codeChunk: codeForPrompt });
+      const budget = plan.ctxBudget - 128; // leave headroom
+      if (estimateTokens(prompt) > budget) {
+        codeForPrompt = slimCode(codeForPrompt, Math.max(128, Math.floor(budget * 0.8)));
+        prompt = buildPrompt({ framework: plan.framework, renderer: plan.renderer, relPath: item.rel, codeChunk: codeForPrompt });
+      }
 
-        const maxGen = Math.min( Math.floor(plan.ctxBudget * 0.35), 900 );
-        const raw = await model.complete(prompt, { maxTokens: maxGen, temperature: 0.1, stop: ['__SKIP__'] });
-        const code = extractCodeBlock(raw);
-        if (!code) {
-          opts.onProgress?.({ type: 'skip', file: item.rel, chunkId: chunk.id, message: 'Model returned no code' });
-          return;
-        }
-        const formatted = await tryFormat(code);
-        const outPath = resolveOutPath(opts.projectRoot, opts.outDir, item.rel);
-        await fs.mkdir(path.dirname(outPath), { recursive: true });
-        if (!opts.force) {
-          try { await fs.access(outPath); if (opts.debug) console.log(`Exists, not overwriting: ${outPath}`); opts.onProgress?.({ type: 'exists', file: item.rel, chunkId: chunk.id }); return; } catch {}
-        }
-        const tests = countTests(formatted);
-        const hints = detectHints(formatted).join(', ');
-        await fs.writeFile(outPath, formatted, 'utf-8');
-        opts.onProgress?.({ type: 'write', file: item.rel, chunkId: chunk.id, message: `${tests}|${hints}` });
-      }));
+      const maxGen = Math.min(Math.floor(plan.ctxBudget * 0.35), 900);
+      const raw = await model.complete(prompt, { maxTokens: maxGen, temperature: 0.1, stop: ['__SKIP__'] });
+      const code = extractCodeBlock(raw);
+      if (!code) {
+        opts.onProgress?.({ type: 'skip', file: item.rel, chunkId: chunk.id, message: 'Model returned no code' });
+        continue;
+      }
+      const formatted = await tryFormat(code);
+      const outPath = resolveOutPath(opts.projectRoot, opts.outDir, item.rel);
+      await fs.mkdir(path.dirname(outPath), { recursive: true });
+      if (!opts.force) {
+        try {
+          await fs.access(outPath);
+          if (opts.debug) console.log(`Exists, not overwriting: ${outPath}`);
+          opts.onProgress?.({ type: 'exists', file: item.rel, chunkId: chunk.id });
+          continue;
+        } catch {}
+      }
+      const tests = countTests(formatted);
+      const hints = detectHints(formatted).join(', ');
+      await fs.writeFile(outPath, formatted, 'utf-8');
+      opts.onProgress?.({ type: 'write', file: item.rel, chunkId: chunk.id, message: `${tests}|${hints}` });
     }
   }
-  await Promise.all(jobs);
 }
 
 function resolveOutPath(projectRoot: string, outDir: string, rel: string): string {
-  const baseName = rel.replace(/\.(tsx|ts)$/i, '.test.$1');
-  const onlyName = path.basename(baseName);
-  return path.join(outDir, onlyName);
+  const relDir = path.dirname(rel);
+  const ext = path.extname(rel);
+  const normalizedExt = ['.ts', '.tsx', '.js', '.jsx'].includes(ext.toLowerCase()) ? ext : '.ts';
+  const baseName = path.basename(rel, ext);
+  const testFile = `${baseName}.test${normalizedExt}`;
+  const destDir = relDir === '.' ? '' : relDir;
+  return path.join(outDir, destDir, '__tests__', testFile);
 }
 
 function extractCodeBlock(text: string): string | null {
