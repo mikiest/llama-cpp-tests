@@ -89,7 +89,7 @@ program
 
     const perFile = new Map<string, FileSummary>();
 
-    const commonProgress = (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'; file: string; chunkId?: string; message?: string }) => {
+    const commonProgress = (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'|'error'; file: string; chunkId?: string; message?: string }) => {
       if (evt.type === 'start') {
         if (activity) activity.text = `📝  Analyzing ${evt.file}…`;
         if (!perFile.has(evt.file)) perFile.set(evt.file, { status: 'skip' });

@@ -13,7 +13,7 @@ export async function generateTestsForPlan(model: ModelWrapper, plan: WorkPlan, 
   force: boolean;
   concurrency: number;
   debug?: boolean;
-  onProgress?: (evt: { type: 'start'|'write'|'skip'|'exists'|'error'; file: string; chunkId?: string; message?: string }) => void;
+  onProgress?: (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'|'error'; file: string; chunkId?: string; message?: string }) => void;
 }) {
   const limit = pLimit(Math.max(1, opts.concurrency));
   const jobs: Array<Promise<void>> = [];
@@ -79,7 +79,7 @@ async function tryFormat(code: string): Promise<string> {
 function slimCode(src: string, maxTokens: number): string {
   let s = src
     .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|\s)//.*$/gm, '$1')
+    .replace(/(^|\s)\/\/.*$/gm, '$1')
     .replace(/\s+/g, ' ');
   let tokens = estimateTokens(s);
   if (tokens > maxTokens) {
