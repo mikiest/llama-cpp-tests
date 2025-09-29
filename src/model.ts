@@ -44,7 +44,13 @@ export async function ensureModel(
     const ctx = await model.createContext({ contextSize: opts.contextSize });
     try {
       const session = new LlamaChatSession({ contextSequence: ctx.getSequence() });
-      const res = await session.prompt(prompt, o.functions);
+      const { functions, stop, ...generationOpts } = o;
+      const promptOptions = {
+        ...generationOpts,
+        ...(stop ? { customStopTriggers: stop } : {}),
+        ...(functions ? { functions, documentFunctionParams: false } : {}),
+      };
+      const res = await session.prompt(prompt, promptOptions);
       return res.trim();
     } finally {
       await ctx.dispose();
