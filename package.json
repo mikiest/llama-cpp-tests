@@ -1,0 +1,30 @@
+{
+  "name": "llama-testgen",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "llama-testgen": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js",
+    "dev": "tsx src/cli.ts",
+    "fmt": "prettier -w ."
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "fast-glob": "^3.3.2",
+    "ignore": "^5.3.1",
+    "node-llama-cpp": "^3.5.0",
+    "ora": "^8.0.1",
+    "p-limit": "^5.0.0",
+    "prettier": "^3.3.3",
+    "ts-morph": "^22.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.3"
+  }
+}

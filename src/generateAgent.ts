@@ -1,0 +1,120 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import pLimit from 'p-limit';
+import prettier from 'prettier';
+import type { WorkPlan } from './planner.js';
+import type { ModelWrapper } from './model.js';
+import type { ScanResult } from './projectScanner.js';
+import { buildPlanPrompt } from './promptPlan.js';
+import { buildTestsPrompt } from './promptTests.js';
+import { runAgent } from './agent.js';
+
+export async function generateWithAgent(
+  model: ModelWrapper,
+  plan: WorkPlan,
+  opts: {
+    projectRoot: string;
+    outDir: string;
+    force: boolean;
+    concurrency: number;
+    debug?: boolean;
+    renderer: 'rtl-web' | 'rtl-native' | 'none';
+    framework: 'jest' | 'vitest';
+    scan: ScanResult;
+    onProgress?: (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'; file: string; chunkId?: string; message?: string }) => void;
+  }
+) {
+  const limit = pLimit(Math.max(1, opts.concurrency));
+  const jobs: Array<Promise<void>> = [];
+
+  for (const item of plan.items) {
+    if (!item.chunks.length) {
+      opts.onProgress?.({ type: 'skip', file: item.rel, message: 'No viable chunks' });
+      continue;
+    }
+    for (const chunk of item.chunks) {
+      jobs.push(limit(async () => {
+        opts.onProgress?.({ type: 'start', file: item.rel, chunkId: chunk.id, message: String(chunk.approxTokens) });
+
+        const planPrompt = buildPlanPrompt({
+          relPath: item.rel,
+          codeChunk: chunk.code,
+          renderer: opts.renderer,
+          framework: opts.framework
+        });
+
+        const agentResult = await runAgent(model, planPrompt, {
+          projectRoot: opts.projectRoot,
+          scan: opts.scan,
+          maxSteps: 4,
+          onTool: ({ step, tool, args }) => {
+            const detail = (args?.relPath || args?.identifier || args?.component || '');
+            opts.onProgress?.({ type: 'tool', file: item.rel, chunkId: chunk.id, message: `${tool} ${detail}` });
+          },
+        });
+
+        if (!agentResult.ok || !agentResult.plan || agentResult.plan.length === 0) {
+          opts.onProgress?.({ type: 'skip', file: item.rel, chunkId: chunk.id, message: 'Empty plan' });
+          return;
+        }
+
+        const testsPrompt = buildTestsPrompt({
+          relPath: item.rel,
+          codeChunk: chunk.code,
+          testPlanJson: JSON.stringify(agentResult.plan),
+          renderer: opts.renderer,
+          framework: opts.framework
+        });
+
+        const raw = await model.complete(testsPrompt, { maxTokens: 900, temperature: 0.1 });
+        const code = extractCodeBlock(raw);
+        if (!code) {
+          opts.onProgress?.({ type: 'skip', file: item.rel, chunkId: chunk.id, message: 'Model returned no code' });
+          return;
+        }
+        const formatted = await tryFormat(code);
+        const outPath = resolveOutPath(opts.outDir, item.rel);
+        await fs.mkdir(path.dirname(outPath), { recursive: true });
+        if (!opts.force) {
+          try { await fs.access(outPath); opts.onProgress?.({ type: 'exists', file: item.rel, chunkId: chunk.id }); return; } catch {}
+        }
+        await fs.writeFile(outPath, formatted, 'utf-8');
+
+        const tests = countTests(formatted);
+        const hints = detectHints(formatted).join(', ');
+        opts.onProgress?.({ type: 'write', file: item.rel, chunkId: chunk.id, message: `${tests}|${hints}` });
+      }));
+    }
+  }
+  await Promise.all(jobs);
+}
+
+function resolveOutPath(outDir: string, rel: string): string {
+  const baseName = rel.replace(/\.(tsx|ts|jsx|js)$/i, '.test.$1');
+  return path.join(outDir, path.basename(baseName));
+}
+
+function extractCodeBlock(text: string): string | null {
+  const m = text.match(/```[a-zA-Z]*\n([\s\S]*?)```/);
+  if (m) return m[1].trim();
+  if (/__SKIP__/.test(text)) return null;
+  if (/describe\(|it\(|test\(/.test(text)) return text.trim();
+  return null;
+}
+
+async function tryFormat(code: string): Promise<string> {
+  try { return await prettier.format(code, { parser: 'typescript' }); } catch { return code; }
+}
+
+function countTests(ts: string): number {
+  const re = /\bit\s*\(|\btest\s*\(/g;
+  let c = 0; while (re.exec(ts)) c++; return c;
+}
+function detectHints(ts: string): string[] {
+  const hints: string[] = [];
+  if (ts.includes('@testing-library/react-native')) hints.push('RTL native');
+  else if (ts.includes('@testing-library/react')) hints.push('RTL web');
+  if (/msw\b|\bsetupServer\b/.test(ts)) hints.push('MSW');
+  if (/jest\.|vi\./.test(ts)) hints.push('mocks');
+  return hints;
+}
