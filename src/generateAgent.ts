@@ -19,7 +19,7 @@ export async function generateWithAgent(
     renderer: 'rtl-web' | 'rtl-native' | 'none';
     framework: 'jest' | 'vitest';
     scan: ScanResult;
-    onProgress?: (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'; file: string; chunkId?: string; message?: string }) => void;
+    onProgress?: (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'|'error'; file: string; chunkId?: string; message?: string }) => void;
   }
 ) {
   for (const item of plan.items) {
@@ -37,15 +37,22 @@ export async function generateWithAgent(
         framework: opts.framework
       });
 
-      const agentResult = await runAgent(model, planPrompt, {
-        projectRoot: opts.projectRoot,
-        scan: opts.scan,
-        maxSteps: 4,
-        onTool: ({ tool, args }) => {
-          const detail = (args?.relPath || args?.identifier || args?.component || '');
-          opts.onProgress?.({ type: 'tool', file: item.rel, chunkId: chunk.id, message: `${tool} ${detail}` });
-        },
-      });
+      let agentResult;
+      try {
+        agentResult = await runAgent(model, planPrompt, {
+          projectRoot: opts.projectRoot,
+          scan: opts.scan,
+          maxSteps: 4,
+          onTool: ({ tool, args }) => {
+            const detail = (args?.relPath || args?.identifier || args?.component || '');
+            opts.onProgress?.({ type: 'tool', file: item.rel, chunkId: chunk.id, message: `${tool} ${detail}` });
+          },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        opts.onProgress?.({ type: 'error', file: item.rel, chunkId: chunk.id, message });
+        continue;
+      }
 
       if (!agentResult.ok || !agentResult.plan || agentResult.plan.length === 0) {
         opts.onProgress?.({ type: 'skip', file: item.rel, chunkId: chunk.id, message: 'Empty plan' });

@@ -139,13 +139,38 @@ function extractJson(text: string): any | null {
 }
 
 function buildSessionFunctions(ctx: AgentCtx) {
+  let toolSteps = 0;
+
+  const limitError = (tool: string) => {
+    const max = ctx.maxSteps ?? 0;
+    return new Error(`Tool invocation limit of ${max} reached while attempting to call "${tool}"`);
+  };
+
+  const ensureCapacity = (tool: string) => {
+    if (typeof ctx.maxSteps === 'number' && toolSteps >= ctx.maxSteps) {
+      throw limitError(tool);
+    }
+  };
+
+  const ensureNotExceeded = (tool: string) => {
+    if (typeof ctx.maxSteps === 'number' && toolSteps > ctx.maxSteps) {
+      throw limitError(tool);
+    }
+  };
+
   const wrap = (name: string, schema: any, handler: (args: any) => Promise<any>) =>
     defineChatSessionFunction({
       description: name.replace(/_/g, ' '),
       params: schema,
       async handler(params: any) {
-        ctx.onTool?.({ step: 0, tool: name, args: params });
-        return await handler(params);
+        ensureCapacity(name);
+        toolSteps += 1;
+        const step = toolSteps;
+        ctx.onTool?.({ step, tool: name, args: params });
+        ensureNotExceeded(name);
+        const result = await handler(params);
+        ensureNotExceeded(name);
+        return result;
       }
     });
 
