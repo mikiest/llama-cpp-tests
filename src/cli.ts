@@ -34,7 +34,7 @@ program
   .option('--max-files <n>', 'Limit number of files to process', (v)=>parseInt(v,10))
   .option('--min-lines <n>', 'Skip files with fewer lines than this (default 10)', (v)=>parseInt(v,10), 10)
   .option('--dry-run', 'Plan only, do not write files', false)
-  .option('--include <globs...>', 'Only include files matching these globs')
+  .option('--include <globs...>', 'Only include files matching these globs (default: src/**/*.{ts,tsx,js,jsx})')
   .option('--exclude <globs...>', 'Exclude files matching these globs')
   .option('--force', 'Overwrite existing test files', false)
   .option('--concurrency <n>', 'Parallel generations (default 2)', (v)=>parseInt(v,10), 2)
