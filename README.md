@@ -21,7 +21,7 @@ llama-testgen <modelPathOrUrlOrHF> <projectPath> [options]
 llama-testgen ./models/qwen2.5-coder-7b.Q8_0.gguf ~/work/my-react-app
 
 # Hugging Face shortcut (auto-download/cache via resolveModelFile)
-llama-testgen hf:mradermacher/Qwen3-Coder-30B-A3B-Instruct-480B-Distill-V2-Fp32-GGUF:Q3_K_M ./my-rn-app --agent --concurrency 2
+llama-testgen hf:mradermacher/Qwen3-Coder-30B-A3B-Instruct-480B-Distill-V2-Fp32-GGUF:Q3_K_M ./my-rn-app --agent
 ```
 
 **Options**
@@ -30,7 +30,6 @@ llama-testgen hf:mradermacher/Qwen3-Coder-30B-A3B-Instruct-480B-Distill-V2-Fp32-
 - `--min-lines <n>`: Skip very small files (default 10)
 - `--include <globs...>` / `--exclude <globs...>`: Glob filters
 - `--force`: Overwrite existing tests
-- `--concurrency <n>`: Parallel generations (default 2)
 - `--dry-run`: Only print plan
 - `--debug`: Verbose logs
 - `--context <n>`: Request model context size (tokens)

@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { getLlama, LlamaChatSession, resolveModelFile, type LlamaGrammar } from 'node-llama-cpp';
+import { getLlama, LlamaChatSession, resolveModelFile } from 'node-llama-cpp';
 
 export type ContextInfo = { contextSize: number };
 
@@ -12,10 +12,8 @@ export type ModelWrapper = {
       temperature?: number;
       stop?: string[];
       functions?: Record<string, any>;
-      grammar?: LlamaGrammar;
     }
   ): Promise<string>;
-  createJsonSchemaGrammar(schema: unknown): Promise<LlamaGrammar>;
   dispose(): Promise<void>;
 };
 
@@ -31,8 +29,6 @@ export async function ensureModel(
 
   const llama = await getLlama();
   const model = await llama.loadModel({ modelPath });
-  const grammarCache = new Map<string, LlamaGrammar>();
-
   const getContextInfo = async (): Promise<ContextInfo> => {
     try {
       const ctx = await model.createContext({ contextSize: opts.contextSize });
@@ -52,7 +48,6 @@ export async function ensureModel(
       temperature?: number;
       stop?: string[];
       functions?: Record<string, any>;
-      grammar?: LlamaGrammar;
     } = {}
   ) => {
     const ctx = await model.createContext({ contextSize: opts.contextSize });
@@ -63,7 +58,6 @@ export async function ensureModel(
       if (typeof o.temperature === 'number') promptOptions.temperature = o.temperature;
       if (o.stop && o.stop.length) promptOptions.customStopTriggers = o.stop;
       if (o.functions) promptOptions.functions = o.functions;
-      if (o.grammar) promptOptions.grammar = o.grammar;
       const res = await session.prompt(prompt, promptOptions);
       return res.trim();
     } finally {
@@ -71,18 +65,9 @@ export async function ensureModel(
     }
   };
 
-  const createJsonSchemaGrammar = async (schema: unknown) => {
-    const key = JSON.stringify(schema) ?? '__schema__';
-    const cached = grammarCache.get(key);
-    if (cached) return cached;
-    const grammar = await llama.createGrammarForJsonSchema(schema as any);
-    grammarCache.set(key, grammar);
-    return grammar;
-  };
-
   const dispose = async () => {
     await model.dispose();
   };
 
-  return { getContextInfo, complete, createJsonSchemaGrammar, dispose };
+  return { getContextInfo, complete, dispose };
 }

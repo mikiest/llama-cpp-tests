@@ -132,41 +132,6 @@ const tools: Record<string, Tool> = {
   }
 };
 
-const PLAN_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['final'],
-  properties: {
-    final: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['plan'],
-      properties: {
-        plan: {
-          type: 'array',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            required: ['title', 'kind', 'arrange', 'act', 'assert'],
-            properties: {
-              title: { type: 'string', minLength: 1 },
-              kind: { type: 'string', enum: ['unit', 'component'] },
-              arrange: { type: 'string', minLength: 1 },
-              act: { type: 'string', minLength: 1 },
-              assert: { type: 'string', minLength: 1 },
-              mocks: {
-                type: 'array',
-                items: { type: 'string', minLength: 1 },
-                default: [],
-              },
-            },
-          },
-        },
-      },
-    },
-  },
-} as const satisfies Record<string, unknown>;
-
 function extractJson(text: string): any | null {
   const m = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
   if (!m) return null;
@@ -232,12 +197,9 @@ export async function runAgent(model: ModelWrapper, userPrompt: string, ctx: Age
   ].join('\\n');
 
   const functions = buildSessionFunctions(ctx);
-  const grammar = await model.createJsonSchemaGrammar(PLAN_SCHEMA);
-
   // Single pass: the model will call tools as needed, then answer with plan JSON.
   const out = await model.complete(`${sys}\n\nUser task:\n${userPrompt}`, {
     functions,
-    grammar,
   });
 
   const json = extractJson(out);

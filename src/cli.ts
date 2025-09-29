@@ -1,8 +1,9 @@
 import { Command } from 'commander';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import ora from 'ora';
 import type { Ora } from 'ora';
-import fs from 'node:fs/promises';
+import pc from 'picocolors';
 import { ensureModel } from './model.js';
 import { scanProject } from './projectScanner.js';
 import { planWork } from './planner.js';
@@ -39,7 +40,6 @@ program
   .option('--include <globs...>', 'Only include files matching these globs (default: src/**/*.{ts,tsx,js,jsx})')
   .option('--exclude <globs...>', 'Exclude files matching these globs')
   .option('--force', 'Overwrite existing test files', false)
-  .option('--concurrency <n>', 'Parallel generations (default 2)', (v)=>parseInt(v,10), 2)
   .option('--debug', 'Verbose logging', false)
   .option('--context <n>', 'Requested context size for the model (tokens)', (v)=>parseInt(v,10))
   .option('--fast', 'Faster, smaller generations', false)
@@ -137,9 +137,28 @@ program
       return `prompt≈ ${Math.round(tokens)} tok`;
     };
 
+    const formatFileLabel = (file: string, chunkId?: string) => {
+      const chunkLabel = chunkId ? ` ${pc.dim(`[chunk ${chunkId}]`)}` : '';
+      return `${pc.cyan(file)}${chunkLabel}`;
+    };
+
+    const emphasize = (text: string, kind: 'info'|'success'|'warn'|'skip'|'error'|'tool') => {
+      switch (kind) {
+        case 'info': return pc.cyan(text);
+        case 'success': return pc.green(text);
+        case 'warn': return pc.yellow(text);
+        case 'skip': return pc.magenta(text);
+        case 'error': return pc.red(text);
+        case 'tool': return pc.blue(text);
+        default: return pc.bold(text);
+      }
+    };
+
+    const dim = (text: string) => pc.dim(text);
+
     const commonProgress = (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'|'error'; file: string; chunkId?: string; message?: string }) => {
       const key = chunkKey(evt);
-      const chunkLabel = evt.chunkId ? ` [chunk ${evt.chunkId}]` : '';
+      const fileLabel = formatFileLabel(evt.file, evt.chunkId);
       if (evt.type === 'start') {
         if (!perFile.has(evt.file)) perFile.set(evt.file, { status: 'skip' });
         const info = perFile.get(evt.file)!;
@@ -153,9 +172,9 @@ program
             chunkPromptTokens.set(key, approx);
           }
           const approxLabel = formatPromptTokens(approx);
-          logLine('🧩', `${evt.file}${chunkLabel} – analyzing${approxLabel ? ` (${approxLabel})` : ''}`);
+          logLine('🧩', `${fileLabel} – ${emphasize('analyzing', 'info')}${approxLabel ? ` ${dim(`(${approxLabel})`)}` : ''}`);
         }
-        setActivity(`🧩  Analyzing ${evt.file}${chunkLabel}…`);
+        setActivity(`🧩  ${pc.yellow('Analyzing')} ${fileLabel}…`);
         perFile.set(evt.file, info);
       } else if (evt.type === 'exists') {
         exists++;
@@ -168,10 +187,10 @@ program
         lastToolMessages.delete(key);
         info.durationMs = (info.startedAt ? Date.now() - info.startedAt : undefined);
         perFile.set(evt.file, info);
-        const durationLabel = duration ? ` • ⏱️ ${formatDuration(duration)}` : '';
+        const durationLabel = duration ? ` • ⏱️ ${dim(formatDuration(duration))}` : '';
         const promptLabel = formatPromptTokens(approxTokens);
-        logLine('📄', `${evt.file}${chunkLabel} – exists (use --force to overwrite)${durationLabel}${promptLabel ? ` • ${promptLabel}` : ''}`);
-        setActivity('🛠️  Working…');
+        logLine('📄', `${fileLabel} – ${emphasize('exists', 'warn')} ${dim('(use --force to overwrite)')}${durationLabel}${promptLabel ? ` • ${dim(promptLabel)}` : ''}`);
+        setActivity(`🛠️  ${pc.blue('Working…')}`);
       } else if (evt.type === 'skip') {
         skippedCount++;
         const info = perFile.get(evt.file) || { status: 'skip' } as FileSummary;
@@ -184,11 +203,11 @@ program
         info.durationMs = (info.startedAt ? Date.now() - info.startedAt : undefined);
         info.reason = evt.message;
         perFile.set(evt.file, info);
-        const reason = evt.message ? ` (${evt.message})` : '';
-        const durationLabel = duration ? ` • ⏱️ ${formatDuration(duration)}` : '';
+        const reason = evt.message ? ` ${dim(`(${evt.message})`)}` : '';
+        const durationLabel = duration ? ` • ⏱️ ${dim(formatDuration(duration))}` : '';
         const promptLabel = formatPromptTokens(approxTokens);
-        logLine('⏭️', `${evt.file}${chunkLabel} – skipped${reason}${durationLabel}${promptLabel ? ` • ${promptLabel}` : ''}`);
-        setActivity('🛠️  Working…');
+        logLine('⏭️', `${fileLabel} – ${emphasize('skipped', 'skip')}${reason}${durationLabel}${promptLabel ? ` • ${dim(promptLabel)}` : ''}`);
+        setActivity(`🛠️  ${pc.blue('Working…')}`);
       } else if (evt.type === 'write') {
         written++;
         let cases = undefined, hints = undefined;
@@ -208,10 +227,10 @@ program
         info.status = 'wrote'; info.cases = cases; info.hints = hints; perFile.set(evt.file, info);
         const caseLabel = typeof cases === 'number' ? `${cases} test${cases === 1 ? '' : 's'}` : 'tests';
         const hintLabel = hints && hints.trim().length ? ` • hints: ${hints.trim()}` : '';
-        const durationLabel = duration ? ` • ⏱️ ${formatDuration(duration)}` : '';
+        const durationLabel = duration ? ` • ⏱️ ${dim(formatDuration(duration))}` : '';
         const promptLabel = formatPromptTokens(approxTokens);
-        logLine('✅', `${evt.file}${chunkLabel} – wrote ${caseLabel}${hintLabel}${durationLabel}${promptLabel ? ` • ${promptLabel}` : ''}`);
-        setActivity('🛠️  Working…');
+        logLine('✅', `${fileLabel} – ${emphasize('wrote', 'success')} ${pc.bold(caseLabel)}${hintLabel ? ` ${dim(hintLabel)}` : ''}${durationLabel}${promptLabel ? ` • ${dim(promptLabel)}` : ''}`);
+        setActivity(`🛠️  ${pc.blue('Working…')}`);
       } else if (evt.type === 'tool') {
         const msg = evt.message || '';
         const tool = msg.split(' ')[0];
@@ -220,9 +239,9 @@ program
         const text = detail ? `${label} ${detail}` : label;
         if (text.trim().length && lastToolMessages.get(key) !== text) {
           lastToolMessages.set(key, text);
-          logLine('🛠️', `${evt.file}${chunkLabel} – ${text}`);
+          logLine('🛠️', `${fileLabel} – ${emphasize(text, 'tool')}`);
         }
-        setActivity(`${text} • ${evt.file}${chunkLabel}`);
+        setActivity(`${emphasize(label, 'tool')} • ${fileLabel}`);
       } else if (evt.type === 'error') {
         const started = chunkStartTimes.get(key);
         const duration = started ? Date.now() - started : undefined;
@@ -230,14 +249,15 @@ program
         const approxTokens = chunkPromptTokens.get(key);
         chunkPromptTokens.delete(key);
         lastToolMessages.delete(key);
-        const durationLabel = duration ? ` • ⏱️ ${formatDuration(duration)}` : '';
+        const durationLabel = duration ? ` • ⏱️ ${dim(formatDuration(duration))}` : '';
         const promptLabel = formatPromptTokens(approxTokens);
-        const reason = evt.message ? `: ${evt.message}` : '';
-        logLine('❌', `${evt.file}${chunkLabel} – error${reason}${durationLabel}${promptLabel ? ` • ${promptLabel}` : ''}`);
-        setActivity('❌  Encountered an error');
+        const reason = evt.message ? `: ${pc.red(evt.message)}` : '';
+        logLine('❌', `${fileLabel} – ${emphasize('error', 'error')}${reason}${durationLabel}${promptLabel ? ` • ${dim(promptLabel)}` : ''}`);
+        setActivity(`❌  ${pc.red('Encountered an error')}`);
       }
 
-      overall.text = `✍️  ${opts.agent ? 'Agent mode: planning & generating…' : 'Generating tests…'} ✅  ${written} • ⏭️  ${skippedCount} • 📄  exists ${exists}`;
+      const modeLabel = opts.agent ? pc.yellow('Agent mode: planning & generating…') : pc.yellow('Generating tests…');
+      overall.text = `✍️  ${modeLabel} ${pc.green(`✅  ${written}`)} • ${pc.magenta(`⏭️  ${skippedCount}`)} • ${pc.yellow(`📄  exists ${exists}`)}`;
     };
 
     if (opts.agent) {
@@ -245,7 +265,6 @@ program
         projectRoot,
         outDir: testSetup.outputDir,
         force: opts.force,
-        concurrency: opts.concurrency,
         debug,
         onProgress: commonProgress,
         renderer: testSetup.renderer,
@@ -257,7 +276,6 @@ program
         projectRoot,
         outDir: testSetup.outputDir,
         force: opts.force,
-        concurrency: opts.concurrency,
         debug,
         onProgress: commonProgress
       });
@@ -272,18 +290,20 @@ program
       const s = perFile.get(rel)!;
       if (s.status === 'wrote') {
         const base = rel.replace(/\.(tsx|ts|jsx|js)$/i, m => `.test${m}`);
-        const cases = typeof s.cases === 'number' ? `${s.cases} cases` : `tests`; const hintStr = s.hints && s.hints.trim().length ? `, ${s.hints}` : '';
-        lines.push(`✅  ${rel} → wrote ${path.basename(base)} (${cases}${hintStr ? ', ' + hintStr : ''}) • ⏱️  ${formatDuration(s.durationMs)} • prompt≈ ${s.tokens ?? 0} tok`);
+        const cases = typeof s.cases === 'number' ? `${s.cases} cases` : `tests`;
+        const hintStr = s.hints && s.hints.trim().length ? `, ${s.hints}` : '';
+        lines.push(`✅  ${pc.cyan(rel)} → ${emphasize('wrote', 'success')} ${pc.bold(path.basename(base))} (${cases}${hintStr ? ', ' + hintStr : ''}) • ⏱️  ${dim(formatDuration(s.durationMs))} • ${dim(`prompt≈ ${s.tokens ?? 0} tok`)}`);
       } else if (s.status === 'exists') {
-        lines.push(`📄  ${rel} → exists (use --force to overwrite) • ⏱️  ${formatDuration(s.durationMs)} • prompt≈ ${s.tokens ?? 0} tok`);
+        lines.push(`📄  ${pc.cyan(rel)} → ${emphasize('exists', 'warn')} ${dim('(use --force to overwrite)')} • ⏱️  ${dim(formatDuration(s.durationMs))} • ${dim(`prompt≈ ${s.tokens ?? 0} tok`)}`);
       } else {
         const reason = s.reason ? s.reason : 'skipped';
-        lines.push(`⏭️  ${rel} → skipped (${reason}) • ⏱️  ${formatDuration(s.durationMs)} • prompt≈ ${s.tokens ?? 0} tok`);
+        lines.push(`⏭️  ${pc.cyan(rel)} → ${emphasize('skipped', 'skip')} ${dim(`(${reason})`)} • ⏱️  ${dim(formatDuration(s.durationMs))} • ${dim(`prompt≈ ${s.tokens ?? 0} tok`)}`);
       }
     }
     for (const l of lines) console.log(l);
 
-    ora().succeed(`✅  Done. Wrote ${written} • ⏭️  skipped ${skippedCount} • 📄  existed ${exists}. Output → ${testSetup.outputDir}`);
+    const relativeOut = path.relative(projectRoot, testSetup.outputDir) || testSetup.outputDir;
+    ora().succeed(`✅  ${pc.green('Done.')} ${pc.green(`Wrote ${written}`)} • ${pc.magenta(`⏭️  skipped ${skippedCount}`)} • ${pc.yellow(`📄  existed ${exists}`)}. Output → ${pc.cyan(relativeOut)}`);
 
     await model.dispose();
   });
