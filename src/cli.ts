@@ -96,7 +96,13 @@ program
     let statusLine = opts.agent ? '🛠️  Preparing…' : '';
 
     const updateOverall = () => {
-      const summary = `✍️  ${modeLabel} ${pc.green(`✅  ${written}`)} • ${pc.magenta(`⏭️  ${skippedCount}`)} • ${pc.yellow(`📄  exists ${exists}`)}`;
+      const summaryLines = [
+        `✍️  ${modeLabel}`,
+        `   ${pc.green(`✅  Wrote: ${written}`)}`,
+        `   ${pc.magenta(`⏭️  Skipped: ${skippedCount}`)}`,
+        `   ${pc.yellow(`📄  Already existed: ${exists}`)}`,
+      ];
+      const summary = summaryLines.join('\n');
       overall.text = statusLine ? `${summary}\n${statusLine}` : summary;
       overall.render();
     };
