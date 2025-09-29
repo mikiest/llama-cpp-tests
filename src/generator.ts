@@ -59,7 +59,7 @@ export async function generateTestsForPlan(model: ModelWrapper, plan: WorkPlan, 
 }
 
 function resolveOutPath(projectRoot: string, outDir: string, rel: string): string {
-  const baseName = rel.replace(/\.(tsx|ts|jsx|js)$/i, '.test.$1');
+  const baseName = rel.replace(/\.(tsx|ts)$/i, '.test.$1');
   const onlyName = path.basename(baseName);
   return path.join(outDir, onlyName);
 }

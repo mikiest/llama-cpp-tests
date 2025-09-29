@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { defineChatSessionFunction } from 'node-llama-cpp';
 import path from 'node:path';
 import { Project } from 'ts-morph';
 import type { ScanResult } from './projectScanner.js';
@@ -137,39 +138,75 @@ function extractJson(text: string): any | null {
   try { return JSON.parse(m[1]); } catch { return null; }
 }
 
-export async function runAgent(model: ModelWrapper, userPrompt: string, ctx: AgentCtx): Promise<{ ok: boolean; plan?: any[]; trace?: any[] }> {
-  const trace: any[] = [];
-  let observation: any = null;
+function buildSessionFunctions(ctx: AgentCtx) {
+  const wrap = (name: string, schema: any, handler: (args: any) => Promise<any>) =>
+    defineChatSessionFunction({
+      description: name.replace(/_/g, ' '),
+      params: schema,
+      async handler(params: any) {
+        ctx.onTool?.({ step: 0, tool: name, args: params });
+        return await handler(params);
+      }
+    });
 
+  return {
+    project_info: wrap('project_info', { type: 'object', properties: {} }, async () => {
+      const r = await tools.project_info({}, ctx); if (!r.ok) throw new Error(r.error!); return r.data;
+    }),
+    read_file: wrap('read_file', {
+      type: 'object', properties: { relPath: { type: 'string' }, maxChars: { type: 'number' } }, required: ['relPath']
+    }, async (args) => {
+      const r = await tools.read_file(args, ctx); if (!r.ok) throw new Error(r.error!); return r.data;
+    }),
+    list_exports: wrap('list_exports', {
+      type: 'object', properties: { relPath: { type: 'string' } }, required: ['relPath']
+    }, async (args) => {
+      const r = await tools.list_exports(args, ctx); if (!r.ok) throw new Error(r.error!); return r.data;
+    }),
+    find_usages: wrap('find_usages', {
+      type: 'object', properties: { identifier: { type: 'string' } }, required: ['identifier']
+    }, async (args) => {
+      const r = await tools.find_usages(args, ctx); if (!r.ok) throw new Error(r.error!); return r.data;
+    }),
+    get_ast_digest: wrap('get_ast_digest', {
+      type: 'object', properties: { relPath: { type: 'string' } }, required: ['relPath']
+    }, async (args) => {
+      const r = await tools.get_ast_digest(args, ctx); if (!r.ok) throw new Error(r.error!); return r.data;
+    }),
+    grep_text: wrap('grep_text', {
+      type: 'object',
+      properties: { pattern: { type: 'string' }, flags: { type: 'string' }, limit: { type: 'number' } },
+      required: ['pattern']
+    }, async (args) => {
+      const r = await tools.grep_text(args, ctx); if (!r.ok) throw new Error(r.error!); return r.data;
+    }),
+    infer_props_from_usage: wrap('infer_props_from_usage', {
+      type: 'object', properties: { component: { type: 'string' } }, required: ['component']
+    }, async (args) => {
+      const r = await tools.infer_props_from_usage(args, ctx); if (!r.ok) throw new Error(r.error!); return r.data;
+    }),
+  };
+}
+
+export async function runAgent(model: ModelWrapper, userPrompt: string, ctx: AgentCtx) {
   const sys = [
     'You are a planning agent for unit tests.',
-    'When you need information, respond ONLY with JSON: {"tool":"<name>","args":{...}} using one of tools: project_info, read_file, list_exports, find_usages, get_ast_digest, grep_text, infer_props_from_usage.',
-    'When ready to produce a plan, respond ONLY with JSON: {"final":{"plan":[...test cases array...]}}.',
-    'Never write prose. Never wrap JSON in backticks.'
-  ].join('\n');
+    'You can call tools via function calling. Use them to gather facts, then return ONLY JSON as:',
+    '{"final":{"plan":[{"title":"...","kind":"unit|component","arrange":"...","act":"...","assert":"...","mocks":["..."]}]}}',
+    'If nothing meaningful to test: {"final":{"plan":[]}}',
+  ].join('\\n');
 
-  for (let step = 0; step < (ctx.maxSteps ?? 4); step++) {
-    const prompt = [sys, 'User task:', userPrompt, observation ? `Observation:\n${JSON.stringify(observation).slice(0, 4000)}` : ''].join('\n\n');
-    const out = await model.complete(prompt, { maxTokens: 700, temperature: 0.1 });
-    const json = extractJson(out);
-    if (!json) { return { ok: false, trace: trace.concat({ step, out }) }; }
+  const functions = buildSessionFunctions(ctx);
 
-    if (json.final && Array.isArray(json.final.plan)) {
-      trace.push({ step, final: json.final });
-      return { ok: true, plan: json.final.plan, trace };
-    }
+  // Single pass: the model will call tools as needed, then answer with plan JSON.
+  const out = await model.complete(`${sys}\n\nUser task:\n${userPrompt}`, {
+    functions,
+  });
 
-    const toolName = json.tool as string;
-    const args = json.args ?? {};
-    if (!toolName || !(toolName in tools)) {
-      return { ok: false, trace: trace.concat({ step, error: 'bad_tool', json }) };
-    }
-
-    ctx.onTool?.({ step, tool: toolName, args });
-    const result = await tools[toolName](args, ctx);
-    trace.push({ step, call: { tool: toolName, args }, result: result.ok ? 'ok' : result.error });
-    observation = result.ok ? result.data : { error: result.error };
+  const json = extractJson(out);
+  if (json?.final?.plan && Array.isArray(json.final.plan)) {
+    return { ok: true, plan: json.final.plan, trace: [{ final: json.final }] };
   }
-
-  return { ok: false, trace, plan: [] };
+  return { ok: false, plan: [], trace: [{ out }] };
 }
+

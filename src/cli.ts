@@ -42,7 +42,7 @@ program
   .option('--context <n>', 'Requested context size for the model (tokens)', (v)=>parseInt(v,10))
   .option('--fast', 'Faster, smaller generations', false)
   .option('--agent', 'Use tool-calling agent (two-pass: plan → tests)', false)
-  .action(async (modelArg, projectPathArg, opts) => {
+  .action(async (modelArg, projectPathArg, opts, cmd) => {
     const projectRoot = path.resolve(projectPathArg);
     const modelSpec = modelArg;
     const debug = !!opts.debug;

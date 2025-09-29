@@ -7,7 +7,7 @@ export type ModelWrapper = {
   getContextInfo(): Promise<ContextInfo>;
   complete(
     prompt: string,
-    opts?: { maxTokens?: number; temperature?: number; stop?: string[] }
+    opts?: { maxTokens?: number; temperature?: number; stop?: string[]; functions?: Record<string, any> }
   ): Promise<string>;
   dispose(): Promise<void>;
 };
@@ -39,12 +39,12 @@ export async function ensureModel(
 
   const complete = async (
     prompt: string,
-    o: { maxTokens?: number; temperature?: number; stop?: string[] } = {}
+    o: { maxTokens?: number; temperature?: number; stop?: string[]; functions?: Record<string, any> } = {}
   ) => {
     const ctx = await model.createContext({ contextSize: opts.contextSize });
     try {
       const session = new LlamaChatSession({ contextSequence: ctx.getSequence() });
-      const res = await session.prompt(prompt);
+      const res = await session.prompt(prompt, o.functions);
       return res.trim();
     } finally {
       await ctx.dispose();
