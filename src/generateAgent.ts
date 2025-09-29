@@ -90,8 +90,13 @@ export async function generateWithAgent(
 }
 
 function resolveOutPath(outDir: string, rel: string): string {
-  const baseName = rel.replace(/\.(tsx|ts|jsx|js)$/i, '.test.$1');
-  return path.join(outDir, path.basename(baseName));
+  const relDir = path.dirname(rel);
+  const ext = path.extname(rel);
+  const normalizedExt = ['.ts', '.tsx', '.js', '.jsx'].includes(ext.toLowerCase()) ? ext : '.ts';
+  const baseName = path.basename(rel, ext);
+  const testFile = `${baseName}.test${normalizedExt}`;
+  const destDir = relDir === '.' ? '' : relDir;
+  return path.join(outDir, destDir, '__tests__', testFile);
 }
 
 function extractCodeBlock(text: string): string | null {

@@ -59,9 +59,13 @@ export async function generateTestsForPlan(model: ModelWrapper, plan: WorkPlan, 
 }
 
 function resolveOutPath(projectRoot: string, outDir: string, rel: string): string {
-  const baseName = rel.replace(/\.(tsx|ts)$/i, '.test.$1');
-  const onlyName = path.basename(baseName);
-  return path.join(outDir, onlyName);
+  const relDir = path.dirname(rel);
+  const ext = path.extname(rel);
+  const normalizedExt = ['.ts', '.tsx', '.js', '.jsx'].includes(ext.toLowerCase()) ? ext : '.ts';
+  const baseName = path.basename(rel, ext);
+  const testFile = `${baseName}.test${normalizedExt}`;
+  const destDir = relDir === '.' ? '' : relDir;
+  return path.join(outDir, destDir, '__tests__', testFile);
 }
 
 function extractCodeBlock(text: string): string | null {
