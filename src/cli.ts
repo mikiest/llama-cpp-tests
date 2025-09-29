@@ -2,7 +2,6 @@ import { Command } from 'commander';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import ora from 'ora';
-import type { Ora } from 'ora';
 import pc from 'picocolors';
 import { ensureModel } from './model.js';
 import { scanProject } from './projectScanner.js';
@@ -91,14 +90,17 @@ program
       console.log(cleared ? `🧹  Cleared output dir: ${relOut}` : `🧹  Skipped clearing output dir: ${relOut}`);
     }
 
-    const overall = ora(opts.agent ? '✍️  Agent mode: planning & generating…' : '✍️  Generating tests…').start();
-    let activity: Ora | null = null;
-    let activityText = '';
-    if (opts.agent) {
-      activityText = '🛠️  Preparing…';
-      activity = ora(activityText).start();
-    }
     let written = 0, exists = 0, skippedCount = initiallySkipped;
+    const overall = ora({ text: '', spinner: 'dots' }).start();
+    const modeLabel = opts.agent ? pc.yellow('Agent mode: planning & generating…') : pc.yellow('Generating tests…');
+    let statusLine = opts.agent ? '🛠️  Preparing…' : '';
+
+    const updateOverall = () => {
+      const summary = `✍️  ${modeLabel} ${pc.green(`✅  ${written}`)} • ${pc.magenta(`⏭️  ${skippedCount}`)} • ${pc.yellow(`📄  exists ${exists}`)}`;
+      overall.text = statusLine ? `${summary}\n${statusLine}` : summary;
+      overall.render();
+    };
+    updateOverall();
 
     const perFile = new Map<string, FileSummary>();
     const chunkStartTimes = new Map<string, number>();
@@ -106,21 +108,14 @@ program
     const lastToolMessages = new Map<string, string>();
 
     const setActivity = (text: string) => {
-      activityText = text;
-      if (activity) {
-        activity.text = text;
-        activity.render();
-      }
+      statusLine = text;
+      updateOverall();
     };
 
     const logLine = (symbol: string, message: string) => {
-      if (activity) {
-        activity.stop();
-      }
+      overall.clear();
       console.log(`${symbol}  ${message}`);
-      if (activity) {
-        activity.start(activityText || '🛠️  Working…');
-      }
+      overall.render();
     };
 
     const chunkKey = (evt: { file: string; chunkId?: string }) => `${evt.file}::${evt.chunkId ?? '0'}`;
@@ -256,8 +251,7 @@ program
         setActivity(`❌  ${pc.red('Encountered an error')}`);
       }
 
-      const modeLabel = opts.agent ? pc.yellow('Agent mode: planning & generating…') : pc.yellow('Generating tests…');
-      overall.text = `✍️  ${modeLabel} ${pc.green(`✅  ${written}`)} • ${pc.magenta(`⏭️  ${skippedCount}`)} • ${pc.yellow(`📄  exists ${exists}`)}`;
+      updateOverall();
     };
 
     if (opts.agent) {
@@ -282,7 +276,6 @@ program
     }
 
     overall.stop();
-    if (activity) activity.stop();
 
     const lines: string[] = [];
     const rels = Array.from(perFile.keys()).sort();
