@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import path from 'node:path';
 import ora from 'ora';
+import type { Ora } from 'ora';
 import fs from 'node:fs/promises';
 import { ensureModel } from './model.js';
 import { scanProject } from './projectScanner.js';
@@ -91,33 +92,103 @@ program
     }
 
     const overall = ora(opts.agent ? '✍️  Agent mode: planning & generating…' : '✍️  Generating tests…').start();
-    const activity = opts.agent ? ora('🛠️  Preparing…').start() : null;
+    let activity: Ora | null = null;
+    let activityText = '';
+    if (opts.agent) {
+      activityText = '🛠️  Preparing…';
+      activity = ora(activityText).start();
+    }
     let written = 0, exists = 0, skippedCount = initiallySkipped;
 
     const perFile = new Map<string, FileSummary>();
+    const chunkStartTimes = new Map<string, number>();
+    const chunkPromptTokens = new Map<string, number>();
+    const lastToolMessages = new Map<string, string>();
+
+    const setActivity = (text: string) => {
+      activityText = text;
+      if (activity) {
+        activity.text = text;
+        activity.render();
+      }
+    };
+
+    const logLine = (symbol: string, message: string) => {
+      if (activity) {
+        activity.stop();
+      }
+      console.log(`${symbol}  ${message}`);
+      if (activity) {
+        activity.start(activityText || '🛠️  Working…');
+      }
+    };
+
+    const chunkKey = (evt: { file: string; chunkId?: string }) => `${evt.file}::${evt.chunkId ?? '0'}`;
+
+    const formatDuration = (ms?: number) => {
+      if (ms == null) return '-';
+      if (ms < 1000) return `${ms} ms`;
+      const seconds = ms / 1000;
+      return `${seconds < 10 ? seconds.toFixed(2) : seconds.toFixed(1)} s`;
+    };
+
+    const formatPromptTokens = (tokens?: number) => {
+      if (tokens == null || !Number.isFinite(tokens)) return '';
+      return `prompt≈ ${Math.round(tokens)} tok`;
+    };
 
     const commonProgress = (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'|'error'; file: string; chunkId?: string; message?: string }) => {
+      const key = chunkKey(evt);
+      const chunkLabel = evt.chunkId ? ` [chunk ${evt.chunkId}]` : '';
       if (evt.type === 'start') {
-        if (activity) activity.text = `📝  Analyzing ${evt.file}…`;
         if (!perFile.has(evt.file)) perFile.set(evt.file, { status: 'skip' });
         const info = perFile.get(evt.file)!;
         if (!info.startedAt) info.startedAt = Date.now();
-        const t = evt.message ? parseInt(evt.message, 10) : 0;
-        info.tokens = (info.tokens ?? 0) + (Number.isFinite(t) ? t : 0);
+        const approx = evt.message ? parseInt(evt.message, 10) : NaN;
+        if (!Number.isFinite(info.tokens)) info.tokens = 0;
+        if (!chunkStartTimes.has(key)) {
+          chunkStartTimes.set(key, Date.now());
+          if (Number.isFinite(approx)) {
+            info.tokens = (info.tokens ?? 0) + approx;
+            chunkPromptTokens.set(key, approx);
+          }
+          const approxLabel = formatPromptTokens(approx);
+          logLine('🧩', `${evt.file}${chunkLabel} – analyzing${approxLabel ? ` (${approxLabel})` : ''}`);
+        }
+        setActivity(`🧩  Analyzing ${evt.file}${chunkLabel}…`);
         perFile.set(evt.file, info);
       } else if (evt.type === 'exists') {
         exists++;
         const info = perFile.get(evt.file) || { status: 'exists' } as FileSummary;
+        const started = chunkStartTimes.get(key);
+        const duration = started ? Date.now() - started : undefined;
+        if (started) chunkStartTimes.delete(key);
+        const approxTokens = chunkPromptTokens.get(key);
+        chunkPromptTokens.delete(key);
+        lastToolMessages.delete(key);
         info.durationMs = (info.startedAt ? Date.now() - info.startedAt : undefined);
         perFile.set(evt.file, info);
-        if (activity) activity.text = `📄  Exists: ${evt.file}`;
+        const durationLabel = duration ? ` • ⏱️ ${formatDuration(duration)}` : '';
+        const promptLabel = formatPromptTokens(approxTokens);
+        logLine('📄', `${evt.file}${chunkLabel} – exists (use --force to overwrite)${durationLabel}${promptLabel ? ` • ${promptLabel}` : ''}`);
+        setActivity('🛠️  Working…');
       } else if (evt.type === 'skip') {
         skippedCount++;
         const info = perFile.get(evt.file) || { status: 'skip' } as FileSummary;
+        const started = chunkStartTimes.get(key);
+        const duration = started ? Date.now() - started : undefined;
+        if (started) chunkStartTimes.delete(key);
+        const approxTokens = chunkPromptTokens.get(key);
+        chunkPromptTokens.delete(key);
+        lastToolMessages.delete(key);
         info.durationMs = (info.startedAt ? Date.now() - info.startedAt : undefined);
         info.reason = evt.message;
         perFile.set(evt.file, info);
-        if (activity) activity.text = `⏭️  Skipped: ${evt.file}`;
+        const reason = evt.message ? ` (${evt.message})` : '';
+        const durationLabel = duration ? ` • ⏱️ ${formatDuration(duration)}` : '';
+        const promptLabel = formatPromptTokens(approxTokens);
+        logLine('⏭️', `${evt.file}${chunkLabel} – skipped${reason}${durationLabel}${promptLabel ? ` • ${promptLabel}` : ''}`);
+        setActivity('🛠️  Working…');
       } else if (evt.type === 'write') {
         written++;
         let cases = undefined, hints = undefined;
@@ -127,16 +198,46 @@ program
           if (h) hints = h;
         }
         const info = perFile.get(evt.file) || { status: 'wrote' } as FileSummary;
+        const started = chunkStartTimes.get(key);
+        const duration = started ? Date.now() - started : undefined;
+        if (started) chunkStartTimes.delete(key);
+        const approxTokens = chunkPromptTokens.get(key);
+        chunkPromptTokens.delete(key);
+        lastToolMessages.delete(key);
         info.durationMs = (info.startedAt ? Date.now() - info.startedAt : undefined);
         info.status = 'wrote'; info.cases = cases; info.hints = hints; perFile.set(evt.file, info);
-        if (activity) activity.text = `✅  Wrote tests for ${evt.file}`;
+        const caseLabel = typeof cases === 'number' ? `${cases} test${cases === 1 ? '' : 's'}` : 'tests';
+        const hintLabel = hints && hints.trim().length ? ` • hints: ${hints.trim()}` : '';
+        const durationLabel = duration ? ` • ⏱️ ${formatDuration(duration)}` : '';
+        const promptLabel = formatPromptTokens(approxTokens);
+        logLine('✅', `${evt.file}${chunkLabel} – wrote ${caseLabel}${hintLabel}${durationLabel}${promptLabel ? ` • ${promptLabel}` : ''}`);
+        setActivity('🛠️  Working…');
       } else if (evt.type === 'tool') {
         const msg = evt.message || '';
         const tool = msg.split(' ')[0];
-        if (activity) activity.text = toolLabel(tool);
+        const detail = msg.slice(tool.length).trim();
+        const label = toolLabel(tool);
+        const text = detail ? `${label} ${detail}` : label;
+        if (text.trim().length && lastToolMessages.get(key) !== text) {
+          lastToolMessages.set(key, text);
+          logLine('🛠️', `${evt.file}${chunkLabel} – ${text}`);
+        }
+        setActivity(`${text} • ${evt.file}${chunkLabel}`);
+      } else if (evt.type === 'error') {
+        const started = chunkStartTimes.get(key);
+        const duration = started ? Date.now() - started : undefined;
+        if (started) chunkStartTimes.delete(key);
+        const approxTokens = chunkPromptTokens.get(key);
+        chunkPromptTokens.delete(key);
+        lastToolMessages.delete(key);
+        const durationLabel = duration ? ` • ⏱️ ${formatDuration(duration)}` : '';
+        const promptLabel = formatPromptTokens(approxTokens);
+        const reason = evt.message ? `: ${evt.message}` : '';
+        logLine('❌', `${evt.file}${chunkLabel} – error${reason}${durationLabel}${promptLabel ? ` • ${promptLabel}` : ''}`);
+        setActivity('❌  Encountered an error');
       }
 
-      overall.text = `✍️  ${opts.agent ? 'Agent mode: planning & generating…' : 'Generating tests…'} ✅  ${written} • ⏭️  ${skippedCount} • 📄  exist ${exists}`;
+      overall.text = `✍️  ${opts.agent ? 'Agent mode: planning & generating…' : 'Generating tests…'} ✅  ${written} • ⏭️  ${skippedCount} • 📄  exists ${exists}`;
     };
 
     if (opts.agent) {
@@ -172,12 +273,12 @@ program
       if (s.status === 'wrote') {
         const base = rel.replace(/\.(tsx|ts|jsx|js)$/i, m => `.test${m}`);
         const cases = typeof s.cases === 'number' ? `${s.cases} cases` : `tests`; const hintStr = s.hints && s.hints.trim().length ? `, ${s.hints}` : '';
-        lines.push(`✅  ${rel} → wrote ${path.basename(base)} (${cases}${hintStr ? ', ' + hintStr : ''}) • ⏱️  ${s.durationMs ? (Math.round(s.durationMs/10)/100).toFixed(2) + 's' : '-'} • in≈ ${s.tokens ?? 0} tok`);
+        lines.push(`✅  ${rel} → wrote ${path.basename(base)} (${cases}${hintStr ? ', ' + hintStr : ''}) • ⏱️  ${formatDuration(s.durationMs)} • prompt≈ ${s.tokens ?? 0} tok`);
       } else if (s.status === 'exists') {
-        lines.push(`📄  ${rel} → exists (use --force to overwrite) • ⏱️  ${s.durationMs ? (Math.round(s.durationMs/10)/100).toFixed(2) + 's' : '-'} • in≈ ${s.tokens ?? 0} tok`);
+        lines.push(`📄  ${rel} → exists (use --force to overwrite) • ⏱️  ${formatDuration(s.durationMs)} • prompt≈ ${s.tokens ?? 0} tok`);
       } else {
         const reason = s.reason ? s.reason : 'skipped';
-        lines.push(`⏭️  ${rel} → skipped (${reason}) • ⏱️  ${s.durationMs ? (Math.round(s.durationMs/10)/100).toFixed(2) + 's' : '-'} • in≈ ${s.tokens ?? 0} tok`);
+        lines.push(`⏭️  ${rel} → skipped (${reason}) • ⏱️  ${formatDuration(s.durationMs)} • prompt≈ ${s.tokens ?? 0} tok`);
       }
     }
     for (const l of lines) console.log(l);
