@@ -57,7 +57,10 @@ export async function ensureModel(
       if (typeof o.maxTokens === 'number') promptOptions.maxTokens = o.maxTokens;
       if (typeof o.temperature === 'number') promptOptions.temperature = o.temperature;
       if (o.stop && o.stop.length) promptOptions.customStopTriggers = o.stop;
-      if (o.functions) promptOptions.functions = o.functions;
+      if (o.functions) {
+        promptOptions.functions = o.functions;
+        promptOptions.documentFunctionParams = false;
+      }
       const res = await session.prompt(prompt, promptOptions);
       return res.trim();
     } finally {
