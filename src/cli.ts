@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import path from 'node:path';
 import ora from 'ora';
+import fs from 'node:fs/promises';
 import { ensureModel } from './model.js';
 import { scanProject } from './projectScanner.js';
 import { planWork } from './planner.js';
@@ -81,6 +82,12 @@ program
       console.log(JSON.stringify({ ctxInfo, testSetup, plan }, null, 2));
       await model.dispose();
       return;
+    }
+
+    const cleared = await clearOutputDir(testSetup.outputDir, projectRoot, { debug });
+    if (debug) {
+      const relOut = path.relative(projectRoot, testSetup.outputDir) || testSetup.outputDir;
+      console.log(cleared ? `🧹  Cleared output dir: ${relOut}` : `🧹  Skipped clearing output dir: ${relOut}`);
     }
 
     const overall = ora(opts.agent ? '✍️  Agent mode: planning & generating…' : '✍️  Generating tests…').start();
@@ -181,3 +188,23 @@ program
   });
 
 program.parseAsync(process.argv);
+
+async function clearOutputDir(outDir: string, projectRoot: string, opts: { debug?: boolean }) {
+  try {
+    const rel = path.relative(projectRoot, outDir);
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+      if (opts.debug) console.warn(`Skipping clear of ${outDir} (outside project root)`);
+      return false;
+    }
+
+    const entries = await fs.readdir(outDir).catch(() => []);
+    await Promise.all(entries.map(async (entry) => {
+      const target = path.join(outDir, entry);
+      await fs.rm(target, { recursive: true, force: true });
+    }));
+    return true;
+  } catch (error) {
+    if (opts.debug) console.warn(`Failed to clear output dir ${outDir}:`, error);
+    return false;
+  }
+}

@@ -36,6 +36,7 @@ llama-testgen hf:mradermacher/Qwen3-Coder-30B-A3B-Instruct-480B-Distill-V2-Fp32-
 - `--context <n>`: Request model context size (tokens)
 - `--fast`: Future preset for faster runs
 - `--agent`: **Tool-calling two-pass** (plan → tests)
+- Output directory is cleared on each run (skipped for `--dry-run`).
 
 ## How it works
 1. **Model probe** determines usable context; planner budgets inputs, leaves headroom.
