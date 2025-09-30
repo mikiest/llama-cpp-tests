@@ -5,6 +5,8 @@ import { WorkPlan } from './planner.js';
 import { buildPrompt } from './prompt.js';
 import type { ModelWrapper } from './model.js';
 import { estimateTokens } from './chunker.js';
+import { verifyGeneratedTestSource } from './testVerifier.js';
+import { countTests, detectHints } from './testUtils.js';
 
 export async function generateTestsForPlan(model: ModelWrapper, plan: WorkPlan, opts: {
   projectRoot: string;
@@ -36,7 +38,6 @@ export async function generateTestsForPlan(model: ModelWrapper, plan: WorkPlan, 
         opts.onProgress?.({ type: 'skip', file: item.rel, chunkId: chunk.id, message: 'Model returned no code' });
         continue;
       }
-      const formatted = await tryFormat(code);
       const outPath = resolveOutPath(opts.projectRoot, opts.outDir, item.rel);
       await fs.mkdir(path.dirname(outPath), { recursive: true });
       if (!opts.force) {
@@ -47,9 +48,26 @@ export async function generateTestsForPlan(model: ModelWrapper, plan: WorkPlan, 
           continue;
         } catch {}
       }
-      const tests = countTests(formatted);
-      const hints = detectHints(formatted).join(', ');
-      await fs.writeFile(outPath, formatted, 'utf-8');
+
+      const formatted = await tryFormat(code);
+      const verification = verifyGeneratedTestSource(formatted, { filePath: outPath });
+      if (verification.diagnostics.length) {
+        const message = verification.diagnostics.join(' | ');
+        opts.onProgress?.({ type: 'error', file: item.rel, chunkId: chunk.id, message: message });
+        if (opts.debug) console.warn(`Verification failed for ${outPath}: ${message}`);
+        continue;
+      }
+      if (verification.testCount === 0) {
+        const message = 'No tests detected after verification';
+        opts.onProgress?.({ type: 'skip', file: item.rel, chunkId: chunk.id, message });
+        if (opts.debug) console.warn(`Skipping ${outPath}: ${message}`);
+        continue;
+      }
+
+      const finalCode = await tryFormat(verification.code);
+      const tests = countTests(finalCode);
+      const hints = detectHints(finalCode).join(', ');
+      await fs.writeFile(outPath, finalCode, 'utf-8');
       opts.onProgress?.({ type: 'write', file: item.rel, chunkId: chunk.id, message: `${tests}|${hints}` });
     }
   }
@@ -66,8 +84,12 @@ function resolveOutPath(projectRoot: string, outDir: string, rel: string): strin
 }
 
 function extractCodeBlock(text: string): string | null {
-  const m = text.match(/```[a-zA-Z]*\n([\s\S]*?)```/);
-  if (m) return m[1].trim();
+  const fenced = text.match(/```[a-zA-Z0-9_-]*\r?\n([\s\S]*?)```/);
+  if (fenced) return fenced[1].trim();
+
+  const inline = text.match(/```[a-zA-Z0-9_-]*[ \t]+([\s\S]*?)```/);
+  if (inline) return inline[1].trim();
+
   if (/__SKIP__/.test(text)) return null;
   if (/describe\(|it\(|test\(/.test(text)) return text.trim();
   return null;
@@ -91,15 +113,3 @@ function slimCode(src: string, maxTokens: number): string {
   return s.trim();
 }
 
-function countTests(ts: string): number {
-  const re = /\bit\s*\(|\btest\s*\(/g;
-  let c = 0; while (re.exec(ts)) c++; return c;
-}
-function detectHints(ts: string): string[] {
-  const hints: string[] = [];
-  if (ts.includes("@testing-library/react-native")) hints.push("RTL native");
-  else if (ts.includes("@testing-library/react")) hints.push("RTL web");
-  if (/msw\b|\bsetupServer\b/.test(ts)) hints.push("MSW");
-  if (/jest\.|vi\./.test(ts)) hints.push("mocks");
-  return hints;
-}
