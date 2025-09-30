@@ -42,7 +42,7 @@ export async function generateWithAgent(
         agentResult = await runAgent(model, planPrompt, {
           projectRoot: opts.projectRoot,
           scan: opts.scan,
-          maxSteps: 6,
+          maxSteps: 20,
           onTool: ({ tool, args }) => {
             const detail = (args?.relPath || args?.identifier || args?.component || '');
             opts.onProgress?.({ type: 'tool', file: item.rel, chunkId: chunk.id, message: `${tool} ${detail}` });
