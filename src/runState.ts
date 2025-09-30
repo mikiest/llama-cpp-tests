@@ -46,7 +46,13 @@ export function computePlanSignature(plan: WorkPlan): string {
   hash.update(plan.renderer);
   hash.update('|');
   hash.update(String(plan.ctxBudget));
-  for (const item of plan.items) {
+  const items = plan.items
+    .map(item => ({
+      ...item,
+      chunks: [...item.chunks].sort((a, b) => a.id.localeCompare(b.id)),
+    }))
+    .sort((a, b) => a.rel.localeCompare(b.rel));
+  for (const item of items) {
     hash.update(item.rel);
     hash.update('|');
     hash.update(String(item.originalTokens));
