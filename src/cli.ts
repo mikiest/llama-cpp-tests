@@ -92,46 +92,56 @@ program
 
     let written = 0, exists = 0, skippedCount = initiallySkipped;
     const overall = ora({ text: '', spinner: 'dots' }).start();
-    const modeLabel = opts.agent ? pc.yellow('Agent mode: planning & generating…') : pc.yellow('Generating tests…');
-    let statusLine = opts.agent ? '🛠️  Preparing…' : '';
+    const modeLabel = opts.agent ? 'Agent mode: planning & generating…' : 'Generating tests…';
+    let statusLine = '';
 
     const updateOverall = () => {
-      const summaryLines = [
+      const summaryParts = [
         `✍️  ${modeLabel}`,
-        `   ${pc.green(`✅  Wrote: ${written}`)}`,
-        `   ${pc.magenta(`⏭️  Skipped: ${skippedCount}`)}`,
-        `   ${pc.yellow(`📄  Already existed: ${exists}`)}`,
+        `✅  Wrote ${written}`,
+        `⏭️  Skipped ${skippedCount}`,
+        `📄  Already existed ${exists}`,
       ];
-      const summary = summaryLines.join('\n');
+      const summary = pc.white(summaryParts.join('  |  '));
       overall.text = statusLine ? `${summary}\n${statusLine}` : summary;
       overall.render();
     };
-    updateOverall();
 
     const perFile = new Map<string, FileSummary>();
     const chunkStartTimes = new Map<string, number>();
     const chunkPromptTokens = new Map<string, number>();
     const lastToolMessages = new Map<string, string>();
-
-    const setActivity = (text: string) => {
-      statusLine = text;
-      updateOverall();
-    };
-
-    const logLine = (symbol: string, message: string) => {
-      overall.clear();
-      console.log(`${symbol}  ${message}`);
-      overall.render();
-    };
+    const overallStart = Date.now();
+    const finishedChunks = new Set<string>();
+    let completedChunks = 0;
 
     const chunkKey = (evt: { file: string; chunkId?: string }) => `${evt.file}::${evt.chunkId ?? '0'}`;
 
+    const markChunkFinished = (evt: { file: string; chunkId?: string }) => {
+      if (evt.chunkId == null) return;
+      const key = chunkKey(evt);
+      if (finishedChunks.has(key)) return;
+      finishedChunks.add(key);
+      completedChunks = Math.min(completedChunks + 1, totalChunks);
+    };
+
     const formatDuration = (ms?: number) => {
       if (ms == null) return '-';
-      if (ms < 1000) return `${ms} ms`;
-      const seconds = ms / 1000;
-      return `${seconds < 10 ? seconds.toFixed(2) : seconds.toFixed(1)} s`;
+      if (ms < 1000) return `${Math.round(ms)}ms`;
+      let totalSeconds = Math.round(ms / 1000);
+      const seconds = totalSeconds % 60;
+      totalSeconds = (totalSeconds - seconds) / 60;
+      const minutes = totalSeconds % 60;
+      const hours = Math.floor(totalSeconds / 60);
+      const parts: string[] = [];
+      if (hours) parts.push(`${hours}h`);
+      if (hours || minutes) parts.push(`${hours ? String(minutes).padStart(2, '0') : minutes}m`);
+      const secondsLabel = (hours || minutes) ? String(seconds).padStart(2, '0') : String(seconds);
+      parts.push(`${secondsLabel}s`);
+      return parts.join('');
     };
+
+    const formatElapsed = () => formatDuration(Date.now() - overallStart);
 
     const formatPromptTokens = (tokens?: number) => {
       if (tokens == null || !Number.isFinite(tokens)) return '';
@@ -156,6 +166,34 @@ program
     };
 
     const dim = (text: string) => pc.dim(text);
+
+    const formatProgressStatus = () => {
+      if (!totalChunks) return '';
+      const inFlight = chunkStartTimes.size;
+      const current = Math.min(completedChunks + inFlight, totalChunks);
+      const pct = totalChunks ? Math.min(100, (current / totalChunks) * 100) : 0;
+      const pctLabel = pct < 10 && totalChunks > 1 ? pct.toFixed(1) : pct.toFixed(0);
+      return `${current}/${totalChunks} • ${pctLabel}%`;
+    };
+
+    const setActivity = (text: string) => {
+      const parts: string[] = [];
+      const progress = formatProgressStatus();
+      if (progress) parts.push(progress);
+      parts.push(`⏱️ ${formatElapsed()}`);
+      const suffix = parts.length ? ` ${pc.white(`[${parts.join(' • ')}]`)}` : '';
+      statusLine = `${text}${suffix}`;
+      updateOverall();
+    };
+
+    const logLine = (symbol: string, message: string) => {
+      overall.clear();
+      console.log(`${symbol}  ${message}`);
+      overall.render();
+    };
+
+    if (opts.agent) setActivity('🛠️  Preparing…');
+    else updateOverall();
 
     const commonProgress = (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'|'error'; file: string; chunkId?: string; message?: string }) => {
       const key = chunkKey(evt);
@@ -186,6 +224,7 @@ program
         const approxTokens = chunkPromptTokens.get(key);
         chunkPromptTokens.delete(key);
         lastToolMessages.delete(key);
+        markChunkFinished(evt);
         info.durationMs = (info.startedAt ? Date.now() - info.startedAt : undefined);
         perFile.set(evt.file, info);
         const durationLabel = duration ? ` • ⏱️ ${dim(formatDuration(duration))}` : '';
@@ -201,6 +240,7 @@ program
         const approxTokens = chunkPromptTokens.get(key);
         chunkPromptTokens.delete(key);
         lastToolMessages.delete(key);
+        markChunkFinished(evt);
         info.durationMs = (info.startedAt ? Date.now() - info.startedAt : undefined);
         info.reason = evt.message;
         perFile.set(evt.file, info);
@@ -224,6 +264,7 @@ program
         const approxTokens = chunkPromptTokens.get(key);
         chunkPromptTokens.delete(key);
         lastToolMessages.delete(key);
+        markChunkFinished(evt);
         info.durationMs = (info.startedAt ? Date.now() - info.startedAt : undefined);
         info.status = 'wrote'; info.cases = cases; info.hints = hints; perFile.set(evt.file, info);
         const caseLabel = typeof cases === 'number' ? `${cases} test${cases === 1 ? '' : 's'}` : 'tests';
@@ -250,6 +291,7 @@ program
         const approxTokens = chunkPromptTokens.get(key);
         chunkPromptTokens.delete(key);
         lastToolMessages.delete(key);
+        markChunkFinished(evt);
         const durationLabel = duration ? ` • ⏱️ ${dim(formatDuration(duration))}` : '';
         const promptLabel = formatPromptTokens(approxTokens);
         const reason = evt.message ? `: ${pc.red(evt.message)}` : '';
