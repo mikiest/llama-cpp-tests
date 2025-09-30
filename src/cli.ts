@@ -92,17 +92,17 @@ program
 
     let written = 0, exists = 0, skippedCount = initiallySkipped;
     const overall = ora({ text: '', spinner: 'dots' }).start();
-    const modeLabel = opts.agent ? pc.yellow('Agent mode: planning & generating…') : pc.yellow('Generating tests…');
+    const modeLabel = opts.agent ? 'Agent mode: planning & generating…' : 'Generating tests…';
     let statusLine = '';
 
     const updateOverall = () => {
-      const summaryLines = [
+      const summaryParts = [
         `✍️  ${modeLabel}`,
-        `   ${pc.green(`✅  Wrote: ${written}`)}`,
-        `   ${pc.magenta(`⏭️  Skipped: ${skippedCount}`)}`,
-        `   ${pc.yellow(`📄  Already existed: ${exists}`)}`,
+        `✅  Wrote ${written}`,
+        `⏭️  Skipped ${skippedCount}`,
+        `📄  Already existed ${exists}`,
       ];
-      const summary = summaryLines.join('\n');
+      const summary = pc.white(summaryParts.join('  |  '));
       overall.text = statusLine ? `${summary}\n${statusLine}` : summary;
       overall.render();
     };
@@ -127,9 +127,18 @@ program
 
     const formatDuration = (ms?: number) => {
       if (ms == null) return '-';
-      if (ms < 1000) return `${ms} ms`;
-      const seconds = ms / 1000;
-      return `${seconds < 10 ? seconds.toFixed(2) : seconds.toFixed(1)} s`;
+      if (ms < 1000) return `${Math.round(ms)}ms`;
+      let totalSeconds = Math.round(ms / 1000);
+      const seconds = totalSeconds % 60;
+      totalSeconds = (totalSeconds - seconds) / 60;
+      const minutes = totalSeconds % 60;
+      const hours = Math.floor(totalSeconds / 60);
+      const parts: string[] = [];
+      if (hours) parts.push(`${hours}h`);
+      if (hours || minutes) parts.push(`${hours ? String(minutes).padStart(2, '0') : minutes}m`);
+      const secondsLabel = (hours || minutes) ? String(seconds).padStart(2, '0') : String(seconds);
+      parts.push(`${secondsLabel}s`);
+      return parts.join('');
     };
 
     const formatElapsed = () => formatDuration(Date.now() - overallStart);
@@ -172,7 +181,7 @@ program
       const progress = formatProgressStatus();
       if (progress) parts.push(progress);
       parts.push(`⏱️ ${formatElapsed()}`);
-      const suffix = parts.length ? ` ${dim(`[${parts.join(' • ')}]`)}` : '';
+      const suffix = parts.length ? ` ${pc.white(`[${parts.join(' • ')}]`)}` : '';
       statusLine = `${text}${suffix}`;
       updateOverall();
     };
