@@ -5,6 +5,7 @@ import { WorkPlan } from './planner.js';
 import { buildPrompt } from './prompt.js';
 import type { ModelWrapper } from './model.js';
 import { estimateTokens } from './chunker.js';
+import { chunkKey } from './runState.js';
 import { verifyGeneratedTestSource } from './testVerifier.js';
 import { countTests, detectHints } from './testUtils.js';
 
@@ -14,13 +15,18 @@ export async function generateTestsForPlan(model: ModelWrapper, plan: WorkPlan, 
   force: boolean;
   debug?: boolean;
   onProgress?: (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'|'error'; file: string; chunkId?: string; message?: string }) => void;
+  resume?: { completedChunks: Set<string> };
 }) {
   for (const item of plan.items) {
+    const skipKey = chunkKey(item.rel);
     if (!item.chunks.length) {
+      if (opts.resume?.completedChunks.has(skipKey)) continue;
       opts.onProgress?.({ type: 'skip', file: item.rel, message: item.skipReason });
       continue;
     }
     for (const chunk of item.chunks) {
+      const key = chunkKey(item.rel, chunk.id);
+      if (opts.resume?.completedChunks.has(key)) continue;
       opts.onProgress?.({ type: 'start', file: item.rel, chunkId: chunk.id, message: String(chunk.approxTokens) });
 
       let codeForPrompt = chunk.code;

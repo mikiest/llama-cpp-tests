@@ -1,6 +1,8 @@
 import { Command } from 'commander';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createInterface } from 'node:readline/promises';
+import { stdin as input, stdout as output } from 'node:process';
 import ora from 'ora';
 import pc from 'picocolors';
 import { ensureModel } from './model.js';
@@ -9,8 +11,15 @@ import { planWork } from './planner.js';
 import { generateTestsForPlan } from './generator.js';
 import { detectTestSetup } from './testSetup.js';
 import { generateWithAgent } from './generateAgent.js';
-
-type FileSummary = { status: 'wrote'|'exists'|'skip'; cases?: number; reason?: string; hints?: string; startedAt?: number; tokens?: number; durationMs?: number };
+import { FileSummary } from './progressTypes.js';
+import {
+  chunkKey as makeChunkKey,
+  computePlanSignature,
+  isStateCompatible,
+  loadRunState,
+  RunStateManager,
+  StoredRunState,
+} from './runState.js';
 
 function toolLabel(tool: string): string {
   switch (tool) {
@@ -78,21 +87,79 @@ program
     const initiallySkipped = plan.items.filter(i => !i.chunks.length).length;
     spin.succeed(`📝  Planned ${totalChunks} chunks (${initiallySkipped} skipped)`);
 
+    const planSignature = computePlanSignature(plan);
+    const runMode = opts.agent ? 'agent' : 'basic';
+    const statePath = path.join(testSetup.outputDir, '.llama-testgen-state.json');
+    const existingState = await loadRunState(statePath);
+
+    const askForResume = async (state: StoredRunState): Promise<'continue' | 'reset'> => {
+      console.log();
+      console.log(
+        pc.yellow(
+          `💾  Found unfinished run from ${new Date(state.updatedAt).toLocaleString()} (${state.totals.completedChunks}/${state.totals.totalChunks} chunks)`,
+        ),
+      );
+      console.log(
+        `    ✅  wrote ${state.totals.written}  |  ⏭️  skipped ${state.totals.skipped}  |  📄  existed ${state.totals.exists}`,
+      );
+      if (input.isTTY && output.isTTY) {
+        const rl = createInterface({ input, output });
+        try {
+          while (true) {
+            const answer = (await rl.question('Continue previous run? (c)ontinue/(r)eset [c/r]: ')).trim().toLowerCase();
+            if (answer === '' || answer === 'c' || answer === 'continue') return 'continue';
+            if (answer === 'r' || answer === 'reset') return 'reset';
+            console.log('Please answer with "c" to continue or "r" to reset.');
+          }
+        } finally {
+          rl.close();
+        }
+      }
+      console.log('No interactive terminal detected, continuing previous run by default.');
+      return 'continue';
+    };
+
+    let resumeState: StoredRunState | null = null;
+    let continuing = false;
+
+    if (existingState && isStateCompatible(existingState, planSignature, runMode, totalChunks)) {
+      if (existingState.totals.completedChunks >= totalChunks) {
+        await fs.rm(statePath, { force: true });
+      } else {
+        const choice = await askForResume(existingState);
+        if (choice === 'continue') {
+          continuing = true;
+          resumeState = existingState;
+        } else {
+          await fs.rm(statePath, { force: true });
+        }
+      }
+    } else if (existingState) {
+      if (debug) console.log('Incompatible previous run state found, resetting.');
+      await fs.rm(statePath, { force: true });
+    }
+
     if (opts.dryRun) {
       console.log(JSON.stringify({ ctxInfo, testSetup, plan }, null, 2));
       await model.dispose();
       return;
     }
 
-    const cleared = await clearOutputDir(testSetup.outputDir, projectRoot, { debug });
+    const cleared = continuing ? false : await clearOutputDir(testSetup.outputDir, projectRoot, { debug });
     if (debug) {
       const relOut = path.relative(projectRoot, testSetup.outputDir) || testSetup.outputDir;
       console.log(cleared ? `🧹  Cleared output dir: ${relOut}` : `🧹  Skipped clearing output dir: ${relOut}`);
     }
 
-    let written = 0, exists = 0, skippedCount = initiallySkipped;
+    const runStateManager = new RunStateManager(statePath, planSignature, runMode, totalChunks, resumeState ?? undefined);
+    const completedChunkKeys = runStateManager.getCompletedChunkKeys();
+
+    let written = continuing ? (resumeState?.totals.written ?? 0) : 0;
+    let exists = continuing ? (resumeState?.totals.exists ?? 0) : 0;
+    let skippedCount = continuing ? (resumeState?.totals.skipped ?? 0) : initiallySkipped;
     const overall = ora({ text: '', spinner: 'dots' }).start();
-    const modeLabel = opts.agent ? 'Agent mode: planning & generating…' : 'Generating tests…';
+    const baseModeLabel = opts.agent ? 'Agent mode: planning & generating…' : 'Generating tests…';
+    const modeLabel = continuing ? `${baseModeLabel} (resuming)` : baseModeLabel;
     let statusLine = '';
 
     const updateOverall = () => {
@@ -108,20 +175,26 @@ program
     };
 
     const perFile = new Map<string, FileSummary>();
+    if (resumeState) {
+      for (const [rel, entry] of Object.entries(resumeState.perFile)) {
+        perFile.set(rel, { ...entry.summary });
+      }
+    }
     const chunkStartTimes = new Map<string, number>();
     const chunkPromptTokens = new Map<string, number>();
     const lastToolMessages = new Map<string, string>();
     const overallStart = Date.now();
-    const finishedChunks = new Set<string>();
-    let completedChunks = 0;
+    const finishedChunks = new Set<string>(completedChunkKeys);
+    let completedChunks = continuing ? (resumeState?.totals.completedChunks ?? 0) : 0;
 
-    const chunkKey = (evt: { file: string; chunkId?: string }) => `${evt.file}::${evt.chunkId ?? '0'}`;
+    runStateManager.setTotals({ written, skipped: skippedCount, exists, completedChunks });
 
     const markChunkFinished = (evt: { file: string; chunkId?: string }) => {
       if (evt.chunkId == null) return;
-      const key = chunkKey(evt);
+      const key = makeChunkKey(evt.file, evt.chunkId);
       if (finishedChunks.has(key)) return;
       finishedChunks.add(key);
+      completedChunkKeys.add(key);
       completedChunks = Math.min(completedChunks + 1, totalChunks);
     };
 
@@ -183,6 +256,7 @@ program
       parts.push(`⏱️ ${formatElapsed()}`);
       const suffix = parts.length ? ` ${pc.white(`[${parts.join(' • ')}]`)}` : '';
       statusLine = `${text}${suffix}`;
+      runStateManager.setTotals({ written, skipped: skippedCount, exists, completedChunks });
       updateOverall();
     };
 
@@ -196,7 +270,7 @@ program
     else updateOverall();
 
     const commonProgress = (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'|'error'; file: string; chunkId?: string; message?: string }) => {
-      const key = chunkKey(evt);
+      const key = makeChunkKey(evt.file, evt.chunkId);
       const fileLabel = formatFileLabel(evt.file, evt.chunkId);
       if (evt.type === 'start') {
         if (!perFile.has(evt.file)) perFile.set(evt.file, { status: 'skip' });
@@ -227,6 +301,13 @@ program
         markChunkFinished(evt);
         info.durationMs = (info.startedAt ? Date.now() - info.startedAt : undefined);
         perFile.set(evt.file, info);
+        runStateManager.recordFileSummary(evt.file, info);
+        runStateManager.recordChunkResult(evt.file, evt.chunkId, {
+          status: 'exists',
+          tokens: approxTokens,
+          durationMs: duration,
+        });
+        completedChunkKeys.add(key);
         const durationLabel = duration ? ` • ⏱️  ${dim(formatDuration(duration))}` : '';
         const promptLabel = formatPromptTokens(approxTokens);
         logLine('📄', `${fileLabel} – ${emphasize('exists', 'warn')} ${dim('(use --force to overwrite)')}${durationLabel}${promptLabel ? ` • ${dim(promptLabel)}` : ''}`);
@@ -244,6 +325,14 @@ program
         info.durationMs = (info.startedAt ? Date.now() - info.startedAt : undefined);
         info.reason = evt.message;
         perFile.set(evt.file, info);
+        runStateManager.recordFileSummary(evt.file, info);
+        runStateManager.recordChunkResult(evt.file, evt.chunkId, {
+          status: 'skip',
+          message: evt.message,
+          tokens: approxTokens,
+          durationMs: duration,
+        });
+        completedChunkKeys.add(key);
         const reason = evt.message ? ` ${dim(`(${evt.message})`)}` : '';
         const durationLabel = duration ? ` • ⏱️  ${dim(formatDuration(duration))}` : '';
         const promptLabel = formatPromptTokens(approxTokens);
@@ -266,7 +355,18 @@ program
         lastToolMessages.delete(key);
         markChunkFinished(evt);
         info.durationMs = (info.startedAt ? Date.now() - info.startedAt : undefined);
-        info.status = 'wrote'; info.cases = cases; info.hints = hints; perFile.set(evt.file, info);
+        info.status = 'wrote';
+        info.cases = cases;
+        info.hints = hints;
+        perFile.set(evt.file, info);
+        runStateManager.recordFileSummary(evt.file, info);
+        runStateManager.recordChunkResult(evt.file, evt.chunkId, {
+          status: 'write',
+          message: evt.message,
+          tokens: approxTokens,
+          durationMs: duration,
+        });
+        completedChunkKeys.add(key);
         const caseLabel = typeof cases === 'number' ? `${cases} test${cases === 1 ? '' : 's'}` : 'tests';
         const hintLabel = hints && hints.trim().length ? ` • hints: ${hints.trim()}` : '';
         const durationLabel = duration ? ` • ⏱️  ${dim(formatDuration(duration))}` : '';
@@ -311,6 +411,7 @@ program
         renderer: testSetup.renderer,
         framework: testSetup.framework,
         scan,
+        resume: { completedChunks: completedChunkKeys },
       });
     } else {
       await generateTestsForPlan(model, plan, {
@@ -318,7 +419,8 @@ program
         outDir: testSetup.outputDir,
         force: opts.force,
         debug,
-        onProgress: commonProgress
+        onProgress: commonProgress,
+        resume: { completedChunks: completedChunkKeys },
       });
     }
 
@@ -344,6 +446,12 @@ program
 
     const relativeOut = path.relative(projectRoot, testSetup.outputDir) || testSetup.outputDir;
     ora().succeed(`✅  ${pc.green('Done.')} ${pc.green(`Wrote ${written}`)} • ${pc.magenta(`⏭️  skipped ${skippedCount}`)} • ${pc.yellow(`📄  existed ${exists}`)}. Output → ${pc.cyan(relativeOut)}`);
+
+    if (completedChunks >= totalChunks) {
+      await runStateManager.complete();
+    } else {
+      await runStateManager.flush();
+    }
 
     await model.dispose();
   });
