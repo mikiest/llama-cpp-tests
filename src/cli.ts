@@ -227,7 +227,7 @@ program
         markChunkFinished(evt);
         info.durationMs = (info.startedAt ? Date.now() - info.startedAt : undefined);
         perFile.set(evt.file, info);
-        const durationLabel = duration ? ` • ⏱️ ${dim(formatDuration(duration))}` : '';
+        const durationLabel = duration ? ` • ⏱️  ${dim(formatDuration(duration))}` : '';
         const promptLabel = formatPromptTokens(approxTokens);
         logLine('📄', `${fileLabel} – ${emphasize('exists', 'warn')} ${dim('(use --force to overwrite)')}${durationLabel}${promptLabel ? ` • ${dim(promptLabel)}` : ''}`);
         setActivity(`🛠️  ${pc.blue('Working…')}`);
@@ -245,7 +245,7 @@ program
         info.reason = evt.message;
         perFile.set(evt.file, info);
         const reason = evt.message ? ` ${dim(`(${evt.message})`)}` : '';
-        const durationLabel = duration ? ` • ⏱️ ${dim(formatDuration(duration))}` : '';
+        const durationLabel = duration ? ` • ⏱️  ${dim(formatDuration(duration))}` : '';
         const promptLabel = formatPromptTokens(approxTokens);
         logLine('⏭️', `${fileLabel} – ${emphasize('skipped', 'skip')}${reason}${durationLabel}${promptLabel ? ` • ${dim(promptLabel)}` : ''}`);
         setActivity(`🛠️  ${pc.blue('Working…')}`);
@@ -269,7 +269,7 @@ program
         info.status = 'wrote'; info.cases = cases; info.hints = hints; perFile.set(evt.file, info);
         const caseLabel = typeof cases === 'number' ? `${cases} test${cases === 1 ? '' : 's'}` : 'tests';
         const hintLabel = hints && hints.trim().length ? ` • hints: ${hints.trim()}` : '';
-        const durationLabel = duration ? ` • ⏱️ ${dim(formatDuration(duration))}` : '';
+        const durationLabel = duration ? ` • ⏱️  ${dim(formatDuration(duration))}` : '';
         const promptLabel = formatPromptTokens(approxTokens);
         logLine('✅', `${fileLabel} – ${emphasize('wrote', 'success')} ${pc.bold(caseLabel)}${hintLabel ? ` ${dim(hintLabel)}` : ''}${durationLabel}${promptLabel ? ` • ${dim(promptLabel)}` : ''}`);
         setActivity(`🛠️  ${pc.blue('Working…')}`);
@@ -291,8 +291,7 @@ program
         const approxTokens = chunkPromptTokens.get(key);
         chunkPromptTokens.delete(key);
         lastToolMessages.delete(key);
-        markChunkFinished(evt);
-        const durationLabel = duration ? ` • ⏱️ ${dim(formatDuration(duration))}` : '';
+        const durationLabel = duration ? ` • ⏱️  ${dim(formatDuration(duration))}` : '';
         const promptLabel = formatPromptTokens(approxTokens);
         const reason = evt.message ? `: ${pc.red(evt.message)}` : '';
         logLine('❌', `${fileLabel} – ${emphasize('error', 'error')}${reason}${durationLabel}${promptLabel ? ` • ${dim(promptLabel)}` : ''}`);
@@ -335,10 +334,10 @@ program
         const hintStr = s.hints && s.hints.trim().length ? `, ${s.hints}` : '';
         lines.push(`✅  ${pc.cyan(rel)} → ${emphasize('wrote', 'success')} ${pc.bold(path.basename(base))} (${cases}${hintStr ? ', ' + hintStr : ''}) • ⏱️  ${dim(formatDuration(s.durationMs))} • ${dim(`prompt≈ ${s.tokens ?? 0} tok`)}`);
       } else if (s.status === 'exists') {
-        lines.push(`📄  ${pc.cyan(rel)} → ${emphasize('exists', 'warn')} ${dim('(use --force to overwrite)')} • ⏱️  ${dim(formatDuration(s.durationMs))} • ${dim(`prompt≈ ${s.tokens ?? 0} tok`)}`);
+        lines.push(`📄  ${pc.cyan(rel)} → ${emphasize('exists', 'warn')} ${dim('(use --force to overwrite)')} • ⏱️   ${dim(formatDuration(s.durationMs))} • ${dim(`prompt≈ ${s.tokens ?? 0} tok`)}`);
       } else {
         const reason = s.reason ? s.reason : 'skipped';
-        lines.push(`⏭️  ${pc.cyan(rel)} → ${emphasize('skipped', 'skip')} ${dim(`(${reason})`)} • ⏱️  ${dim(formatDuration(s.durationMs))} • ${dim(`prompt≈ ${s.tokens ?? 0} tok`)}`);
+        lines.push(`⏭️  ${pc.cyan(rel)} → ${emphasize('skipped', 'skip')} ${dim(`(${reason})`)} • ⏱️   ${dim(formatDuration(s.durationMs))} • ${dim(`prompt≈ ${s.tokens ?? 0} tok`)}`);
       }
     }
     for (const l of lines) console.log(l);
