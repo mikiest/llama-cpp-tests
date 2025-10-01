@@ -7,6 +7,7 @@ import type { ScanResult } from './projectScanner.js';
 import { buildPlanPrompt } from './promptPlan.js';
 import { buildTestsPrompt } from './promptTests.js';
 import { runAgent } from './agent.js';
+import { chunkKey } from './runState.js';
 
 export async function generateWithAgent(
   model: ModelWrapper,
@@ -20,14 +21,19 @@ export async function generateWithAgent(
     framework: 'jest' | 'vitest';
     scan: ScanResult;
     onProgress?: (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'|'error'; file: string; chunkId?: string; message?: string }) => void;
+    resume?: { completedChunks: Set<string> };
   }
 ) {
   for (const item of plan.items) {
+    const skipKey = chunkKey(item.rel);
     if (!item.chunks.length) {
+      if (opts.resume?.completedChunks.has(skipKey)) continue;
       opts.onProgress?.({ type: 'skip', file: item.rel, message: 'No viable chunks' });
       continue;
     }
     for (const chunk of item.chunks) {
+      const key = chunkKey(item.rel, chunk.id);
+      if (opts.resume?.completedChunks.has(key)) continue;
       opts.onProgress?.({ type: 'start', file: item.rel, chunkId: chunk.id, message: String(chunk.approxTokens) });
 
       const planPrompt = buildPlanPrompt({
@@ -42,7 +48,7 @@ export async function generateWithAgent(
         agentResult = await runAgent(model, planPrompt, {
           projectRoot: opts.projectRoot,
           scan: opts.scan,
-          maxSteps: 20,
+          maxSteps: 40,
           onTool: ({ tool, args }) => {
             const detail = (args?.relPath || args?.identifier || args?.component || '');
             opts.onProgress?.({ type: 'tool', file: item.rel, chunkId: chunk.id, message: `${tool} ${detail}` });
