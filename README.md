@@ -1,6 +1,6 @@
 # llama-testgen
 
-Generate focused unit tests for React/React Native TypeScript projects using local GGUF models via **node-llama-cpp**.
+Generate focused unit tests for React/React Native TypeScript projects using local or remote models via **node-llama-cpp**.
 
 ## Install
 ```bash
@@ -8,11 +8,11 @@ pnpm i
 pnpm build
 ```
 
-> You need a local or remote GGUF model compatible with node-llama-cpp. Example: code-specialized 7B–14B models (Q6_K/Q8_0 recommended).
+> You need a local or remote model compatible with node-llama-cpp (GGUF files are common, but not required). Example: code-specialized 7B–14B models (Q6_K/Q8_0 recommended).
 
 ## Usage
 ```bash
-llama-testgen <modelPathOrUrlOrHF> <projectPath> [options]
+llama-testgen <modelPathOrUrl> <projectPath> [options]
 ```
 
 **Examples**
@@ -31,10 +31,11 @@ llama-testgen hf:mradermacher/Qwen3-Coder-30B-A3B-Instruct-480B-Distill-V2-Fp32-
 - `--include <globs...>` / `--exclude <globs...>`: Glob filters
 - `--force`: Overwrite existing tests
 - `--dry-run`: Only print plan
-- `--debug`: Verbose logs
+- `-v, --verbose`: Verbose logs (`--debug` remains as an alias)
 - `--context <n>`: Request model context size (tokens)
 - `--fast`: Future preset for faster runs
 - `--agent`: **Tool-calling two-pass** (plan → tests)
+- `--max-tool-calls <n>`: Cap agent tool invocations per chunk (default 40)
 - Output directory is cleared on each run (skipped for `--dry-run`).
 
 ## How it works

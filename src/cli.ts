@@ -42,7 +42,7 @@ const program = new Command();
 program
   .name('llama-testgen')
   .description('🧪  Generate unit tests for React/React Native TypeScript projects using node-llama-cpp')
-  .argument('<model>', 'Model id or GGUF URL/path (e.g. ./models/qwen2.5-coder.Q8.gguf or https://... .gguf)')
+  .argument('<model>', 'Model id or path/URL (GGUF, Hugging Face alias, etc.)')
   .argument('<projectPath>', 'Path to the project root')
   .option('-o, --out <dir>', 'Output directory for tests (default: autodetect __tests__ or __generated-tests__)', '')
   .option('--max-files <n>', 'Limit number of files to process', (v)=>parseInt(v,10))
@@ -51,14 +51,21 @@ program
   .option('--include <globs...>', 'Only include files matching these globs (default: src/**/*.{ts,tsx,js,jsx})')
   .option('--exclude <globs...>', 'Exclude files matching these globs')
   .option('--force', 'Overwrite existing test files', false)
-  .option('--debug', 'Verbose logging', false)
+  .option('-v, --verbose', 'Verbose logging', false)
+  .option('--debug', 'Alias for --verbose', false)
   .option('--context <n>', 'Requested context size for the model (tokens)', (v)=>parseInt(v,10))
   .option('--fast', 'Faster, smaller generations', false)
   .option('--agent', 'Use tool-calling agent (two-pass: plan → tests)', false)
+  .option('--max-tool-calls <n>', 'Maximum tool invocations per chunk when using --agent (default: 40)', (v)=>parseInt(v,10))
   .action(async (modelArg, projectPathArg, opts, cmd) => {
     const projectRoot = path.resolve(projectPathArg);
     const modelSpec = modelArg;
-    const debug = !!opts.debug;
+    const verbose = Boolean(opts.verbose || opts.debug);
+    const debug = verbose;
+    const parsedMaxToolCalls = Number(opts.maxToolCalls);
+    const maxToolCalls = Number.isFinite(parsedMaxToolCalls) && parsedMaxToolCalls > 0
+      ? Math.floor(parsedMaxToolCalls)
+      : 40;
 
     const spin = ora({ spinner: 'dots' });
 
@@ -421,6 +428,7 @@ program
         outDir: testSetup.outputDir,
         force: opts.force,
         debug,
+        maxToolCalls,
         onProgress: commonProgress,
         renderer: testSetup.renderer,
         framework: testSetup.framework,
