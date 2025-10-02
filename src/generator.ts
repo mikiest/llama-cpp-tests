@@ -8,6 +8,8 @@ import { estimateTokens } from './chunker.js';
 import { chunkKey } from './runState.js';
 import { verifyGeneratedTestSource } from './testVerifier.js';
 import { countTests, detectHints } from './testUtils.js';
+import type { ScanResult } from './projectScanner.js';
+import { reviewGeneratedTest } from './testReviewer.js';
 
 export async function generateTestsForPlan(model: ModelWrapper, plan: WorkPlan, opts: {
   projectRoot: string;
@@ -16,6 +18,7 @@ export async function generateTestsForPlan(model: ModelWrapper, plan: WorkPlan, 
   debug?: boolean;
   onProgress?: (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'|'error'; file: string; chunkId?: string; message?: string }) => void;
   resume?: { completedChunks: Set<string> };
+  scan: ScanResult;
 }) {
   for (const item of plan.items) {
     const skipKey = chunkKey(item.rel);
@@ -70,7 +73,39 @@ export async function generateTestsForPlan(model: ModelWrapper, plan: WorkPlan, 
         continue;
       }
 
-      const finalCode = await tryFormat(verification.code);
+      let finalCode = await tryFormat(verification.code);
+
+      const review = await reviewGeneratedTest(model, {
+        projectRoot: opts.projectRoot,
+        scan: opts.scan,
+        sourceRelPath: item.rel,
+        originalSource: chunk.code,
+        generatedTestSource: finalCode,
+        testFilePath: outPath,
+        onTool: (event) => {
+          const detail = event.args?.relPath || event.args?.identifier || event.args?.component || event.args?.pattern || '';
+          opts.onProgress?.({ type: 'tool', file: item.rel, chunkId: chunk.id, message: `review:${event.tool} ${detail}`.trim() });
+        },
+      });
+
+      if (review.ok && review.code) {
+        const refined = await tryFormat(review.code);
+        const reviewVerification = verifyGeneratedTestSource(refined, { filePath: outPath });
+        if (reviewVerification.diagnostics.length) {
+          const message = `Review output failed verification: ${reviewVerification.diagnostics.join(' | ')}`;
+          opts.onProgress?.({ type: 'error', file: item.rel, chunkId: chunk.id, message });
+          if (opts.debug) console.warn(`Review verification failed for ${outPath}: ${message}`);
+        } else if (reviewVerification.testCount === 0) {
+          const message = 'Review output removed all tests';
+          opts.onProgress?.({ type: 'error', file: item.rel, chunkId: chunk.id, message });
+          if (opts.debug) console.warn(`Review skipped for ${outPath}: ${message}`);
+        } else {
+          finalCode = await tryFormat(reviewVerification.code);
+        }
+      } else if (!review.ok && opts.debug) {
+        console.warn(`Review skipped for ${outPath}: ${review.reason ?? 'unknown error'}`);
+      }
+
       const tests = countTests(finalCode);
       const hints = detectHints(finalCode).join(', ');
       await fs.writeFile(outPath, finalCode, 'utf-8');
