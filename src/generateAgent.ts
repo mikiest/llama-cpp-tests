@@ -17,6 +17,7 @@ export async function generateWithAgent(
     outDir: string;
     force: boolean;
     debug?: boolean;
+    maxToolCalls?: number;
     renderer: 'rtl-web' | 'rtl-native' | 'none';
     framework: 'jest' | 'vitest';
     scan: ScanResult;
@@ -48,7 +49,7 @@ export async function generateWithAgent(
         agentResult = await runAgent(model, planPrompt, {
           projectRoot: opts.projectRoot,
           scan: opts.scan,
-          maxSteps: 40,
+          maxSteps: opts.maxToolCalls ?? 40,
           onTool: ({ tool, args }) => {
             const detail = (args?.relPath || args?.identifier || args?.component || '');
             opts.onProgress?.({ type: 'tool', file: item.rel, chunkId: chunk.id, message: `${tool} ${detail}` });
