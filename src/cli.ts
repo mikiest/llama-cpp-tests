@@ -25,8 +25,11 @@ function toolLabel(tool: string): string {
   switch (tool) {
     case 'list_exports': return '📜  Listing exports…';
     case 'read_file': return '📖  Reading file…';
+    case 'read_file_section': return '📑  Reading file section…';
     case 'find_usages': return '🔍  Finding usages…';
     case 'grep_text': return '🔎  Searching code…';
+    case 'list_files': return '📁  Listing files…';
+    case 'get_imports': return '📦  Inspecting imports…';
     case 'infer_props_from_usage': return '🧠  Inferring props from usage…';
     case 'get_ast_digest': return '🧩  Analyzing AST…';
     case 'project_info': return '🧭  Reading project info…';
@@ -382,15 +385,26 @@ program
         setActivity(`🛠️  ${pc.blue('Working…')}`);
       } else if (evt.type === 'tool') {
         const msg = evt.message || '';
-        const tool = msg.split(' ')[0];
-        const detail = msg.slice(tool.length).trim();
+        const toolToken = msg.split(' ')[0];
+        let tool = toolToken;
+        let phaseLabel = '';
+        if (toolToken.includes(':')) {
+          const [phase, actual] = toolToken.split(':', 2);
+          if (phase === 'review' && actual) {
+            phaseLabel = '🔁 Review';
+            tool = actual;
+          }
+        }
+        const detail = msg.slice(toolToken.length).trim();
         const label = toolLabel(tool);
-        const text = detail ? `${label} ${detail}` : label;
+        const textCore = detail ? `${label} ${detail}` : label;
+        const text = phaseLabel ? `${phaseLabel} • ${textCore}` : textCore;
         if (text.trim().length && lastToolMessages.get(key) !== text) {
           lastToolMessages.set(key, text);
           logLine('🛠️', `${fileLabel} – ${emphasize(text, 'tool')}`);
         }
-        setActivity(`${emphasize(label, 'tool')} • ${fileLabel}`);
+        const activityLabel = phaseLabel ? `${phaseLabel} • ${label}` : label;
+        setActivity(`${emphasize(activityLabel, 'tool')} • ${fileLabel}`);
       } else if (evt.type === 'error') {
         const started = chunkStartTimes.get(key);
         const duration = started ? Date.now() - started : undefined;
@@ -429,6 +443,7 @@ program
         debug,
         onProgress: commonProgress,
         resume: { completedChunks: completedChunkKeys },
+        scan,
       });
     }
 

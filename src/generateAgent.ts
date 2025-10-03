@@ -8,6 +8,9 @@ import { buildPlanPrompt } from './promptPlan.js';
 import { buildTestsPrompt } from './promptTests.js';
 import { runAgent } from './agent.js';
 import { chunkKey } from './runState.js';
+import { verifyGeneratedTestSource } from './testVerifier.js';
+import { reviewGeneratedTest } from './testReviewer.js';
+import { countTests, detectHints } from './testUtils.js';
 
 export async function generateWithAgent(
   model: ModelWrapper,
@@ -90,10 +93,58 @@ export async function generateWithAgent(
           continue;
         } catch {}
       }
-      await fs.writeFile(outPath, formatted, 'utf-8');
+      const verification = verifyGeneratedTestSource(formatted, { filePath: outPath });
+      if (verification.diagnostics.length) {
+        const message = verification.diagnostics.join(' | ');
+        opts.onProgress?.({ type: 'error', file: item.rel, chunkId: chunk.id, message });
+        if (opts.debug) console.warn(`Verification failed for ${outPath}: ${message}`);
+        continue;
+      }
+      if (verification.testCount === 0) {
+        const message = 'No tests detected after verification';
+        opts.onProgress?.({ type: 'skip', file: item.rel, chunkId: chunk.id, message });
+        if (opts.debug) console.warn(`Skipping ${outPath}: ${message}`);
+        continue;
+      }
 
-      const tests = countTests(formatted);
-      const hints = detectHints(formatted).join(', ');
+      let finalCode = await tryFormat(verification.code);
+
+      const review = await reviewGeneratedTest(model, {
+        projectRoot: opts.projectRoot,
+        scan: opts.scan,
+        sourceRelPath: item.rel,
+        originalSource: chunk.code,
+        generatedTestSource: finalCode,
+        testFilePath: outPath,
+        planJson: JSON.stringify(agentResult.plan),
+        onTool: (event) => {
+          const detail = event.args?.relPath || event.args?.identifier || event.args?.component || event.args?.pattern || '';
+          opts.onProgress?.({ type: 'tool', file: item.rel, chunkId: chunk.id, message: `review:${event.tool} ${detail}`.trim() });
+        },
+      });
+
+      if (review.ok && review.code) {
+        const refined = await tryFormat(review.code);
+        const reviewVerification = verifyGeneratedTestSource(refined, { filePath: outPath });
+        if (reviewVerification.diagnostics.length) {
+          const message = `Review output failed verification: ${reviewVerification.diagnostics.join(' | ')}`;
+          opts.onProgress?.({ type: 'error', file: item.rel, chunkId: chunk.id, message });
+          if (opts.debug) console.warn(`Review verification failed for ${outPath}: ${message}`);
+        } else if (reviewVerification.testCount === 0) {
+          const message = 'Review output removed all tests';
+          opts.onProgress?.({ type: 'error', file: item.rel, chunkId: chunk.id, message });
+          if (opts.debug) console.warn(`Review skipped for ${outPath}: ${message}`);
+        } else {
+          finalCode = await tryFormat(reviewVerification.code);
+        }
+      } else if (!review.ok && opts.debug) {
+        console.warn(`Review skipped for ${outPath}: ${review.reason ?? 'unknown error'}`);
+      }
+
+      await fs.writeFile(outPath, finalCode, 'utf-8');
+
+      const tests = countTests(finalCode);
+      const hints = detectHints(finalCode).join(', ');
       opts.onProgress?.({ type: 'write', file: item.rel, chunkId: chunk.id, message: `${tests}|${hints}` });
     }
   }
@@ -119,17 +170,4 @@ function extractCodeBlock(text: string): string | null {
 
 async function tryFormat(code: string): Promise<string> {
   try { return await prettier.format(code, { parser: 'typescript' }); } catch { return code; }
-}
-
-function countTests(ts: string): number {
-  const re = /\bit\s*\(|\btest\s*\(/g;
-  let c = 0; while (re.exec(ts)) c++; return c;
-}
-function detectHints(ts: string): string[] {
-  const hints: string[] = [];
-  if (ts.includes('@testing-library/react-native')) hints.push('RTL native');
-  else if (ts.includes('@testing-library/react')) hints.push('RTL web');
-  if (/msw\b|\bsetupServer\b/.test(ts)) hints.push('MSW');
-  if (/jest\.|vi\./.test(ts)) hints.push('mocks');
-  return hints;
 }
