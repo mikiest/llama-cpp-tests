@@ -38,7 +38,7 @@ const program = new Command();
 
 program
   .name('llama-testgen')
-  .description('🧪  Generate unit tests for React/React Native TypeScript projects using node-llama-cpp')
+  .description('🧪  Generate unit tests for React/React Native TypeScript projects using LangChain + Llama Studio')
   .argument('<model>', 'Model id or path/URL (GGUF, Hugging Face alias, etc.)')
   .argument('<projectPath>', 'Path to the project root')
   .option('-o, --out <dir>', 'Output directory for tests (default: autodetect __tests__ or __generated-tests__)', '')

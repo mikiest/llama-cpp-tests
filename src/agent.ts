@@ -1,9 +1,8 @@
 import fs from 'node:fs/promises';
-import { defineChatSessionFunction } from 'node-llama-cpp';
 import path from 'node:path';
 import { Project } from 'ts-morph';
 import type { ScanResult } from './projectScanner.js';
-import type { ModelWrapper } from './model.js';
+import type { FunctionTool, ModelWrapper } from './model.js';
 
 type AgentCtx = { projectRoot: string; scan: ScanResult; maxSteps?: number; onTool?: (ev: { step: number; tool: string; args: any }) => void };
 type ToolResult = { ok: boolean; data?: any; error?: string };
@@ -138,7 +137,7 @@ function extractJson(text: string): any | null {
   try { return JSON.parse(m[1]); } catch { return null; }
 }
 
-function buildSessionFunctions(ctx: AgentCtx) {
+function buildSessionFunctions(ctx: AgentCtx): Record<string, FunctionTool> {
   let toolSteps = 0;
 
   const limitError = (tool: string) => {
@@ -158,21 +157,21 @@ function buildSessionFunctions(ctx: AgentCtx) {
     }
   };
 
-  const wrap = (name: string, schema: any, handler: (args: any) => Promise<any>) =>
-    defineChatSessionFunction({
-      description: name.replace(/_/g, ' '),
-      params: schema,
-      async handler(params: any) {
-        ensureCapacity(name);
-        toolSteps += 1;
-        const step = toolSteps;
-        ctx.onTool?.({ step, tool: name, args: params });
-        ensureNotExceeded(name);
-        const result = await handler(params);
-        ensureNotExceeded(name);
-        return result;
-      }
-    });
+  const wrap = (name: string, schema: any, handler: (args: any) => Promise<any>): FunctionTool => ({
+    name,
+    description: name.replace(/_/g, ' '),
+    parameters: schema,
+    async handler(params: any) {
+      ensureCapacity(name);
+      toolSteps += 1;
+      const step = toolSteps;
+      ctx.onTool?.({ step, tool: name, args: params });
+      ensureNotExceeded(name);
+      const result = await handler(params);
+      ensureNotExceeded(name);
+      return result;
+    },
+  });
 
   return {
     project_info: wrap('project_info', { type: 'object', properties: {} }, async () => {
