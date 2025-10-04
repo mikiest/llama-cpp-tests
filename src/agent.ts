@@ -7,6 +7,13 @@ import type { FunctionTool, ModelWrapper } from './model.js';
 type AgentCtx = { projectRoot: string; scan: ScanResult; maxSteps?: number; onTool?: (ev: { step: number; tool: string; args: any }) => void };
 type ToolResult = { ok: boolean; data?: any; error?: string };
 
+export type AgentRun = {
+  ok: boolean;
+  plan: any[];
+  trace: any[];
+  reason?: string;
+};
+
 type Tool = (args: any, ctx: AgentCtx) => Promise<ToolResult>;
 
 const tools: Record<string, Tool> = {
@@ -92,9 +99,34 @@ const tools: Record<string, Tool> = {
   async grep_text(args, ctx) {
     const pat = String(args.pattern || '').trim();
     if (!pat) return { ok: false, error: 'missing_pattern' };
-    const flags = String(args.flags || 'i');
+    const rawFlags = args.flags === undefined ? 'i' : String(args.flags || '');
+    const allowed = new Set(['g', 'i', 'm', 's', 'y', 'u', 'd']);
+    const seen = new Set<string>();
+    let sanitized = '';
+    let hadInvalid = false;
+    for (const ch of rawFlags) {
+      if (!allowed.has(ch)) {
+        hadInvalid = true;
+        continue;
+      }
+      if (seen.has(ch)) {
+        hadInvalid = true;
+        continue;
+      }
+      seen.add(ch);
+      sanitized += ch;
+    }
+    if (!sanitized && args.flags === undefined) sanitized = 'i';
+    if (hadInvalid) {
+      return { ok: false, error: 'invalid_flags' };
+    }
     const limit = Math.min(100, Number(args.limit || 40));
-    const re = new RegExp(pat, flags);
+    let re: RegExp;
+    try {
+      re = new RegExp(pat, sanitized);
+    } catch {
+      return { ok: false, error: 'invalid_flags' };
+    }
     const hits: any[] = [];
     for (const f of ctx.scan.files) {
       const lines = f.text.split(/\r?\n/);
@@ -167,57 +199,80 @@ function buildSessionFunctions(ctx: AgentCtx): Record<string, FunctionTool> {
       const step = toolSteps;
       ctx.onTool?.({ step, tool: name, args: params });
       ensureNotExceeded(name);
-      const result = await handler(params);
-      ensureNotExceeded(name);
-      return result;
+      try {
+        const result = await handler(params);
+        ensureNotExceeded(name);
+        return result;
+      } catch (error) {
+        ensureNotExceeded(name);
+        if (error instanceof Error) {
+          return { ok: false, error: error.message };
+        }
+        return { ok: false, error: String(error) };
+      }
     },
   });
 
   return {
     project_info: wrap('project_info', { type: 'object', properties: {} }, async () => {
-      const r = await tools.project_info({}, ctx); if (!r.ok) throw new Error(r.error!); return r.data;
+      const r = await tools.project_info({}, ctx);
+      if (!r.ok) return r;
+      return r.data;
     }),
     read_file: wrap('read_file', {
       type: 'object', properties: { relPath: { type: 'string' }, maxChars: { type: 'number' } }, required: ['relPath']
     }, async (args) => {
-      const r = await tools.read_file(args, ctx); if (!r.ok) throw new Error(r.error!); return r.data;
+      const r = await tools.read_file(args, ctx);
+      if (!r.ok) return r;
+      return r.data;
     }),
     list_exports: wrap('list_exports', {
       type: 'object', properties: { relPath: { type: 'string' } }, required: ['relPath']
     }, async (args) => {
-      const r = await tools.list_exports(args, ctx); if (!r.ok) throw new Error(r.error!); return r.data;
+      const r = await tools.list_exports(args, ctx);
+      if (!r.ok) return r;
+      return r.data;
     }),
     find_usages: wrap('find_usages', {
       type: 'object', properties: { identifier: { type: 'string' } }, required: ['identifier']
     }, async (args) => {
-      const r = await tools.find_usages(args, ctx); if (!r.ok) throw new Error(r.error!); return r.data;
+      const r = await tools.find_usages(args, ctx);
+      if (!r.ok) return r;
+      return r.data;
     }),
     get_ast_digest: wrap('get_ast_digest', {
       type: 'object', properties: { relPath: { type: 'string' } }, required: ['relPath']
     }, async (args) => {
-      const r = await tools.get_ast_digest(args, ctx); if (!r.ok) throw new Error(r.error!); return r.data;
+      const r = await tools.get_ast_digest(args, ctx);
+      if (!r.ok) return r;
+      return r.data;
     }),
     grep_text: wrap('grep_text', {
       type: 'object',
       properties: { pattern: { type: 'string' }, flags: { type: 'string' }, limit: { type: 'number' } },
       required: ['pattern']
     }, async (args) => {
-      const r = await tools.grep_text(args, ctx); if (!r.ok) throw new Error(r.error!); return r.data;
+      const r = await tools.grep_text(args, ctx);
+      if (!r.ok) return r;
+      return r.data;
     }),
     infer_props_from_usage: wrap('infer_props_from_usage', {
       type: 'object', properties: { component: { type: 'string' } }, required: ['component']
     }, async (args) => {
-      const r = await tools.infer_props_from_usage(args, ctx); if (!r.ok) throw new Error(r.error!); return r.data;
+      const r = await tools.infer_props_from_usage(args, ctx);
+      if (!r.ok) return r;
+      return r.data;
     }),
   };
 }
 
-export async function runAgent(model: ModelWrapper, userPrompt: string, ctx: AgentCtx) {
+export async function runAgent(model: ModelWrapper, userPrompt: string, ctx: AgentCtx): Promise<AgentRun> {
   const sys = [
     'You are a planning agent for unit tests.',
     'You can call tools via function calling. Use them to gather facts, then return ONLY JSON as:',
     '{"final":{"plan":[{"title":"...","kind":"unit|component","arrange":"...","act":"...","assert":"...","mocks":["..."]}]}}',
-    'If nothing meaningful to test: {"final":{"plan":[]}}',
+    'If a tool call fails, note the error but keep using whatever information you have already gathered.',
+    'If nothing meaningful to test: {"final":{"plan":[],"reason":"<brief explanation>"}}',
   ].join('\\n');
 
   const functions = buildSessionFunctions(ctx);
@@ -227,9 +282,10 @@ export async function runAgent(model: ModelWrapper, userPrompt: string, ctx: Age
   });
 
   const json = extractJson(out);
+  const reason = typeof json?.final?.reason === 'string' ? json.final.reason.trim() : undefined;
   if (json?.final?.plan && Array.isArray(json.final.plan)) {
-    return { ok: true, plan: json.final.plan, trace: [{ final: json.final }] };
+    return { ok: true, plan: json.final.plan, trace: [{ final: json.final }], reason };
   }
-  return { ok: false, plan: [], trace: [{ out }] };
+  return { ok: false, plan: [], trace: [{ out }], reason };
 }
 
