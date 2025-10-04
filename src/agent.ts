@@ -92,9 +92,34 @@ const tools: Record<string, Tool> = {
   async grep_text(args, ctx) {
     const pat = String(args.pattern || '').trim();
     if (!pat) return { ok: false, error: 'missing_pattern' };
-    const flags = String(args.flags || 'i');
+    const rawFlags = args.flags === undefined ? 'i' : String(args.flags || '');
+    const allowed = new Set(['g', 'i', 'm', 's', 'y', 'u', 'd']);
+    const seen = new Set<string>();
+    let sanitized = '';
+    let hadInvalid = false;
+    for (const ch of rawFlags) {
+      if (!allowed.has(ch)) {
+        hadInvalid = true;
+        continue;
+      }
+      if (seen.has(ch)) {
+        hadInvalid = true;
+        continue;
+      }
+      seen.add(ch);
+      sanitized += ch;
+    }
+    if (!sanitized && args.flags === undefined) sanitized = 'i';
+    if (hadInvalid) {
+      return { ok: false, error: 'invalid_flags' };
+    }
     const limit = Math.min(100, Number(args.limit || 40));
-    const re = new RegExp(pat, flags);
+    let re: RegExp;
+    try {
+      re = new RegExp(pat, sanitized);
+    } catch {
+      return { ok: false, error: 'invalid_flags' };
+    }
     const hits: any[] = [];
     for (const f of ctx.scan.files) {
       const lines = f.text.split(/\r?\n/);
