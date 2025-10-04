@@ -15,26 +15,23 @@ export function buildPrompt(params: {
 - Mock external IO.
 - Keep examples short and deterministic.
 - If not testable (types-only/barrel/autogen), reply __SKIP__ only.
+- Do not wrap your response in Markdown fences; return raw TypeScript.
 
 Example – component test (condensed):
-\`\`\`ts
 import { render, screen } from '@testing-library/react';
 import { SaveButton } from './SaveButton';
 
-test('renders label', () => {
+test('shows the provided label', () => {
   render(<SaveButton label="Save" />);
   expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
 });
-\`\`\`
 
 Example – logic test (condensed):
-\`\`\`ts
 import { formatName } from './formatName';
 
-test('formats first and last name', () => {
+test('joins first and last name with a space', () => {
   expect(formatName('Ada', 'Lovelace')).toBe('Ada Lovelace');
 });
-\`\`\`
 
 FILE: ${relPath}
 SOURCE:
@@ -42,5 +39,5 @@ SOURCE:
 ${codeChunk}
 
 ---
-Return exactly one TypeScript code block with tests. If nothing to test, return __SKIP__.`;
+Return only the TypeScript test file contents without Markdown fences. If nothing to test, return __SKIP__.`;
 }

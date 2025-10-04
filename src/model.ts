@@ -98,7 +98,7 @@ export async function ensureModel(
       if (!toolCalls.length) {
         const content = Array.isArray(response.content)
           ? response.content
-              .map(part => {
+              .map((part: unknown) => {
                 if (typeof part === 'string') return part;
                 if (typeof part === 'object' && part !== null && 'text' in part) {
                   return (part as { text?: string }).text ?? '';

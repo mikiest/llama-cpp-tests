@@ -15,26 +15,23 @@ export function buildTestsPrompt(params: {
 - Focus on public behavior. Name tests clearly.
 - Keep examples short and deterministic.
 - If plan is empty, return __SKIP__.
+- Do not wrap your response in Markdown fences; return raw TypeScript.
 
 Example – component test (condensed):
-\`\`\`ts
 import { render, screen } from '@testing-library/react';
 import { Greeting } from './Greeting';
 
-test('shows message', () => {
+test('displays the greeting message', () => {
   render(<Greeting name="Sky" />);
   expect(screen.getByText('Hello, Sky')).toBeInTheDocument();
 });
-\`\`\`
 
 Example – logic test (condensed):
-\`\`\`ts
 import { sum } from './math';
 
-test('adds numbers', () => {
+test('adds two numbers', () => {
   expect(sum(2, 3)).toBe(5);
 });
-\`\`\`
 
 FILE: ${relPath}
 PLAN(JSON): ${testPlanJson}
@@ -43,5 +40,5 @@ SOURCE:
 ${codeChunk}
 
 ---
-Return exactly one TypeScript code block with tests. If empty plan, return __SKIP__.`;
+Return only the TypeScript test file contents without Markdown fences. If empty plan, return __SKIP__.`;
 }
