@@ -68,7 +68,7 @@ program
     const parsedMaxToolCalls = Number(opts.maxToolCalls);
     const maxToolCalls = Number.isFinite(parsedMaxToolCalls) && parsedMaxToolCalls > 0
       ? Math.floor(parsedMaxToolCalls)
-      : 40;
+      : 100;
 
     const spin = ora({ spinner: 'dots' });
 

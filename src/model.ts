@@ -55,12 +55,12 @@ async function ensureLlamaStudio(
   modelSpec: string,
   opts: EnsureModelOptions & { backend: 'llama-studio' },
 ): Promise<ModelWrapper> {
-  const apiKey = process.env.LLAMA_STUDIO_API_KEY;
-  if (!apiKey) {
-    throw new Error('LLAMA_STUDIO_API_KEY environment variable is required to use Llama Studio.');
-  }
+  const apiKey = process.env.LLAMA_STUDIO_API_KEY || 'd';
+  // if (!apiKey) {
+  //   throw new Error('LLAMA_STUDIO_API_KEY environment variable is required to use Llama Studio.');
+  // }
 
-  const baseURL = process.env.LLAMA_STUDIO_API_BASE ?? 'https://api.llamaindex.ai/v1';
+  const baseURL = process.env.LLAMA_STUDIO_API_BASE ?? 'http://127.0.0.1:1234/v1';
   if (opts.debug) {
     console.log(`Using Llama Studio model "${modelSpec}" via ${baseURL}`);
   }
