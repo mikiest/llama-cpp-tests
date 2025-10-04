@@ -62,7 +62,8 @@ export async function generateWithAgent(
       }
 
       if (!agentResult.ok || !agentResult.plan || agentResult.plan.length === 0) {
-        opts.onProgress?.({ type: 'skip', file: item.rel, chunkId: chunk.id, message: 'Empty plan' });
+        const detail = agentResult.reason ? `Empty plan: ${agentResult.reason}` : 'Empty plan';
+        opts.onProgress?.({ type: 'skip', file: item.rel, chunkId: chunk.id, message: detail });
         continue;
       }
 

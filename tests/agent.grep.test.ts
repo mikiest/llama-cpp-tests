@@ -29,14 +29,8 @@ const fakeModel: ModelWrapper = {
     const grep = opts?.functions?.grep_text;
     assert.ok(grep, 'grep_text tool should be available');
 
-    await assert.rejects(
-      () => grep.handler({ pattern: 'foo', flags: 'rn' }),
-      (error: any) => {
-        assert.ok(error instanceof Error, 'Expected an Error');
-        assert.strictEqual(error.message, 'invalid_flags');
-        return true;
-      },
-    );
+    const invalid = await grep.handler({ pattern: 'foo', flags: 'rn' });
+    assert.deepEqual(invalid, { ok: false, error: 'invalid_flags' });
 
     const hits = await grep.handler({ pattern: 'foo', flags: 'im' });
     assert.ok(Array.isArray(hits));
