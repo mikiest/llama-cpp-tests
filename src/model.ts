@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 
@@ -24,9 +25,35 @@ export type ModelWrapper = {
   dispose(): Promise<void>;
 };
 
+export type ModelBackend = 'llama-studio' | 'llama-cpp';
+
+export type EnsureModelOptions = {
+  debug?: boolean;
+  contextSize?: number;
+  backend?: ModelBackend | 'auto';
+};
+
 export async function ensureModel(
   modelSpec: string,
-  opts: { debug?: boolean; contextSize?: number } = {},
+  opts: EnsureModelOptions = {},
+): Promise<ModelWrapper> {
+  const backend = opts.backend ?? 'auto';
+  const studioKey = process.env.LLAMA_STUDIO_API_KEY;
+
+  if (backend === 'llama-studio' || (backend === 'auto' && studioKey)) {
+    return ensureLlamaStudio(modelSpec, { ...opts, backend: 'llama-studio' });
+  }
+
+  if (backend === 'llama-cpp' || backend === 'auto') {
+    return ensureLlamaCpp(modelSpec, { ...opts, backend: 'llama-cpp' });
+  }
+
+  throw new Error(`Unsupported backend: ${backend}`);
+}
+
+async function ensureLlamaStudio(
+  modelSpec: string,
+  opts: EnsureModelOptions & { backend: 'llama-studio' },
 ): Promise<ModelWrapper> {
   const apiKey = process.env.LLAMA_STUDIO_API_KEY;
   if (!apiKey) {
@@ -143,6 +170,88 @@ export async function ensureModel(
 
   const dispose = async () => {
     return;
+  };
+
+  return { getContextInfo, complete, dispose };
+}
+
+async function ensureLlamaCpp(
+  modelSpec: string,
+  opts: EnsureModelOptions & { backend: 'llama-cpp' },
+): Promise<ModelWrapper> {
+  let llamaCpp: typeof import('node-llama-cpp');
+  try {
+    llamaCpp = await import('node-llama-cpp');
+  } catch (err) {
+    throw new Error(
+      'The node-llama-cpp package is required for the llama-cpp backend. Install it or choose the llama-studio backend.',
+    );
+  }
+
+  const { getLlama, LlamaChatSession, resolveModelFile, defineChatSessionFunction } = llamaCpp;
+
+  const modelPath = await resolveModelFile(modelSpec).catch(async () => {
+    const source = modelSpec.startsWith('http') ? modelSpec : path.resolve(modelSpec);
+    return resolveModelFile(source);
+  });
+  if (opts.debug) console.log(`Model path resolved to: ${modelPath}`);
+
+  const llama = await getLlama();
+  const model = await llama.loadModel({ modelPath });
+
+  const getContextInfo = async (): Promise<ContextInfo> => {
+    try {
+      const ctx = await model.createContext({ contextSize: opts.contextSize });
+      const info = { contextSize: ctx.contextSize };
+      await ctx.dispose();
+      return info;
+    } catch (e) {
+      if (opts.debug) console.warn('Context probe failed, defaulting to 4096:', e);
+      return { contextSize: 4096 };
+    }
+  };
+
+  const complete = async (
+    prompt: string,
+    o: {
+      maxTokens?: number;
+      temperature?: number;
+      stop?: string[];
+      functions?: Record<string, FunctionTool>;
+    } = {},
+  ) => {
+    const ctx = await model.createContext({ contextSize: opts.contextSize });
+    try {
+      const session = new LlamaChatSession({ contextSequence: ctx.getSequence() });
+      const promptOptions: Record<string, unknown> = {};
+      if (typeof o.maxTokens === 'number') promptOptions.maxTokens = o.maxTokens;
+      if (typeof o.temperature === 'number') promptOptions.temperature = o.temperature;
+      if (o.stop && o.stop.length) promptOptions.customStopTriggers = o.stop;
+
+      if (o.functions && Object.keys(o.functions).length) {
+        promptOptions.functions = Object.values(o.functions).map(tool =>
+          defineChatSessionFunction({
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters,
+            async handler({ args }) {
+              const result = await tool.handler(args);
+              return typeof result === 'string' ? result : JSON.stringify(result);
+            },
+          }),
+        );
+        promptOptions.documentFunctionParams = false;
+      }
+
+      const res = await session.prompt(prompt, promptOptions);
+      return res.trim();
+    } finally {
+      await ctx.dispose();
+    }
+  };
+
+  const dispose = async () => {
+    await model.dispose();
   };
 
   return { getContextInfo, complete, dispose };
