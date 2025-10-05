@@ -38,7 +38,7 @@ const program = new Command();
 
 program
   .name('llama-testgen')
-  .description('🧪  Generate unit tests for React/React Native TypeScript projects using node-llama-cpp')
+  .description('🧪  Generate unit tests for React/React Native TypeScript projects using Llama Studio or local Llama.cpp models')
   .argument('<model>', 'Model id or path/URL (GGUF, Hugging Face alias, etc.)')
   .argument('<projectPath>', 'Path to the project root')
   .option('-o, --out <dir>', 'Output directory for tests (default: autodetect __tests__ or __generated-tests__)', '')
@@ -51,6 +51,7 @@ program
   .option('-v, --verbose', 'Verbose logging', false)
   .option('--debug', 'Alias for --verbose', false)
   .option('--context <n>', 'Requested context size for the model (tokens)', (v)=>parseInt(v,10))
+  .option('--backend <backend>', 'LLM backend: auto (default), llama-studio, or llama-cpp', 'auto')
   .option('--fast', 'Faster, smaller generations', false)
   .option('--agent', 'Use tool-calling agent (two-pass: plan → tests)', false)
   .option('--max-tool-calls <n>', 'Maximum tool invocations per chunk when using --agent (default: 40)', (v)=>parseInt(v,10))
@@ -59,15 +60,24 @@ program
     const modelSpec = modelArg;
     const verbose = Boolean(opts.verbose || opts.debug);
     const debug = verbose;
+    const backendOpt = String(opts.backend ?? 'auto').toLowerCase();
+    const allowedBackends = new Set(['auto', 'llama-studio', 'llama-cpp']);
+    if (!allowedBackends.has(backendOpt)) {
+      throw new Error(`Unknown backend "${opts.backend}". Use auto, llama-studio, or llama-cpp.`);
+    }
     const parsedMaxToolCalls = Number(opts.maxToolCalls);
     const maxToolCalls = Number.isFinite(parsedMaxToolCalls) && parsedMaxToolCalls > 0
       ? Math.floor(parsedMaxToolCalls)
-      : 40;
+      : 100;
 
     const spin = ora({ spinner: 'dots' });
 
     spin.start('🤖  Loading model');
-    const model = await ensureModel(modelSpec, { debug, contextSize: opts.context });
+    const model = await ensureModel(modelSpec, {
+      debug,
+      contextSize: opts.context,
+      backend: backendOpt as 'auto' | 'llama-studio' | 'llama-cpp',
+    });
     spin.succeed('🤖  Model loaded');
 
     spin.start('🧠  Probing context size');

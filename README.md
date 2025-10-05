@@ -1,6 +1,6 @@
 # llama-testgen
 
-Generate focused unit tests for React/React Native TypeScript projects using local or remote models via **node-llama-cpp**.
+Generate focused unit tests for React/React Native TypeScript projects using local GGUFs via **node-llama-cpp** or hosted models through the **Llama Studio API**.
 
 ## Install
 ```bash
@@ -8,7 +8,7 @@ pnpm i
 pnpm build
 ```
 
-> You need a local or remote model compatible with node-llama-cpp (GGUF files are common, but not required). Example: code-specialized 7B–14B models (Q6_K/Q8_0 recommended).
+> For local runs you need a model compatible with node-llama-cpp (GGUF files are common, but not required). Hosted runs require `LLAMA_STUDIO_API_KEY` (and optional `LLAMA_STUDIO_API_BASE`).
 
 ## Usage
 ```bash
@@ -18,10 +18,13 @@ llama-testgen <modelPathOrUrl> <projectPath> [options]
 **Examples**
 ```bash
 # Local model
-llama-testgen ./models/qwen2.5-coder-7b.Q8_0.gguf ~/work/my-react-app
+llama-testgen ./models/qwen2.5-coder-7b.Q8_0.gguf ~/work/my-react-app --backend llama-cpp
 
 # Hugging Face shortcut (auto-download/cache via resolveModelFile)
-llama-testgen hf:mradermacher/Qwen3-Coder-30B-A3B-Instruct-480B-Distill-V2-Fp32-GGUF:Q3_K_M ./my-rn-app --agent
+llama-testgen hf:mradermacher/Qwen3-Coder-30B-A3B-Instruct-480B-Distill-V2-Fp32-GGUF:Q3_K_M ./my-rn-app --agent --backend llama-cpp
+
+# Hosted Llama Studio model (LLAMA_STUDIO_API_KEY must be set)
+llama-testgen meta-llama/Llama-3.1-70B-Instruct ./work/my-app --backend llama-studio
 ```
 
 **Options**
@@ -33,6 +36,7 @@ llama-testgen hf:mradermacher/Qwen3-Coder-30B-A3B-Instruct-480B-Distill-V2-Fp32-
 - `--dry-run`: Only print plan
 - `-v, --verbose`: Verbose logs (`--debug` remains as an alias)
 - `--context <n>`: Request model context size (tokens)
+- `--backend <backend>`: Force backend (`auto`, `llama-studio`, or `llama-cpp`)
 - `--fast`: Future preset for faster runs
 - `--agent`: **Tool-calling two-pass** (plan → tests)
 - `--max-tool-calls <n>`: Cap agent tool invocations per chunk (default 40)

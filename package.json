@@ -16,11 +16,16 @@
     "commander": "^12.1.0",
     "fast-glob": "^3.3.2",
     "ignore": "^5.3.1",
-    "node-llama-cpp": "^3.5.0",
+    "langchain": "^0.3.35",
+    "@langchain/core": "^0.3.32",
+    "@langchain/openai": "^0.3.6",
     "ora": "^8.0.1",
     "picocolors": "^1.0.0",
     "prettier": "^3.3.3",
     "ts-morph": "^22.0.0"
+  },
+  "optionalDependencies": {
+    "node-llama-cpp": "^3.5.0"
   },
   "devDependencies": {
     "@types/node": "^22.7.5",
