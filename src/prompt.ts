@@ -19,17 +19,17 @@ export function buildPrompt(params: {
 
 Example – component test (condensed):
 import { render, screen } from '@testing-library/react';
-import { SaveButton } from './SaveButton';
+import { SaveButton } from '../SaveButton';
 
-test('shows the provided label', () => {
+it('shows the provided label', () => {
   render(<SaveButton label="Save" />);
   expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
 });
 
 Example – logic test (condensed):
-import { formatName } from './formatName';
+import { formatName } from '../formatName';
 
-test('joins first and last name with a space', () => {
+it('joins first and last name with a space', () => {
   expect(formatName('Ada', 'Lovelace')).toBe('Ada Lovelace');
 });
 

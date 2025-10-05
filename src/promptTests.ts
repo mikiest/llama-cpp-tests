@@ -19,17 +19,17 @@ export function buildTestsPrompt(params: {
 
 Example – component test (condensed):
 import { render, screen } from '@testing-library/react';
-import { Greeting } from './Greeting';
+import { Greeting } from '../Greeting';
 
-test('displays the greeting message', () => {
+it('displays the greeting message', () => {
   render(<Greeting name="Sky" />);
   expect(screen.getByText('Hello, Sky')).toBeInTheDocument();
 });
 
 Example – logic test (condensed):
-import { sum } from './math';
+import { sum } from '../math';
 
-test('adds two numbers', () => {
+it('adds two numbers', () => {
   expect(sum(2, 3)).toBe(5);
 });
 
