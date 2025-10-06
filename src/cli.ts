@@ -41,7 +41,7 @@ program
   .description('🧪  Generate unit tests for React/React Native TypeScript projects using Llama Studio or local Llama.cpp models')
   .argument('<model>', 'Model id or path/URL (GGUF, Hugging Face alias, etc.)')
   .argument('<projectPath>', 'Path to the project root')
-  .option('-o, --out <dir>', 'Output directory for tests (default: autodetect __tests__ or __generated-tests__)', '')
+  .option('-o, --out <dir>', 'Base directory for generated tests (default: project root mirrors source structure)', '')
   .option('--max-files <n>', 'Limit number of files to process', (v)=>parseInt(v,10))
   .option('--min-lines <n>', 'Skip files with fewer lines than this (default 10)', (v)=>parseInt(v,10), 10)
   .option('--dry-run', 'Plan only, do not write files', false)
@@ -55,6 +55,7 @@ program
   .option('--fast', 'Faster, smaller generations', false)
   .option('--agent', 'Use tool-calling agent (two-pass: plan → tests)', false)
   .option('--max-tool-calls <n>', 'Maximum tool invocations per chunk when using --agent (default: 40)', (v)=>parseInt(v,10))
+  .option('--max-fix-loops <n>', 'Maximum attempts to repair failing tests before skipping (default: 3)', (v)=>parseInt(v,10))
   .action(async (modelArg, projectPathArg, opts, cmd) => {
     const projectRoot = path.resolve(projectPathArg);
     const modelSpec = modelArg;
@@ -69,6 +70,10 @@ program
     const maxToolCalls = Number.isFinite(parsedMaxToolCalls) && parsedMaxToolCalls > 0
       ? Math.floor(parsedMaxToolCalls)
       : 100;
+    const parsedFixLoops = Number(opts.maxFixLoops);
+    const maxFixLoops = Number.isFinite(parsedFixLoops) && parsedFixLoops > 0
+      ? Math.min(10, Math.floor(parsedFixLoops))
+      : 3;
 
     const spin = ora({ spinner: 'dots' });
 
@@ -430,6 +435,7 @@ program
         framework: testSetup.framework,
         scan,
         resume: { completedChunks: completedChunkKeys },
+        maxFixLoops,
       });
     } else {
       await generateTestsForPlan(model, plan, {
@@ -439,6 +445,7 @@ program
         debug,
         onProgress: commonProgress,
         resume: { completedChunks: completedChunkKeys },
+        maxFixLoops,
       });
     }
 
