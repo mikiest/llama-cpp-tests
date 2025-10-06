@@ -41,7 +41,7 @@ program
   .description('🧪  Generate unit tests for React/React Native TypeScript projects using Llama Studio or local Llama.cpp models')
   .argument('<model>', 'Model id or path/URL (GGUF, Hugging Face alias, etc.)')
   .argument('<projectPath>', 'Path to the project root')
-  .option('-o, --out <dir>', 'Output directory for tests (default: autodetect __tests__ or __generated-tests__)', '')
+  .option('-o, --out <dir>', 'Base directory for generated tests (default: project root mirrors source structure)', '')
   .option('--max-files <n>', 'Limit number of files to process', (v)=>parseInt(v,10))
   .option('--min-lines <n>', 'Skip files with fewer lines than this (default 10)', (v)=>parseInt(v,10), 10)
   .option('--dry-run', 'Plan only, do not write files', false)

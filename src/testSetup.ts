@@ -21,13 +21,11 @@ export async function detectTestSetup(projectRoot: string, outOverride?: string)
     ? 'rtl-web'
     : 'none';
 
-  const defaultDir = path.join(projectRoot, '__generated-tests__');
-  const outputDir = outOverride ? path.resolve(projectRoot, outOverride) : (await dirExists(path.join(projectRoot, '__tests__'))) ? path.join(projectRoot, '__tests__') : defaultDir;
+  const outputDir = outOverride
+    ? path.resolve(projectRoot, outOverride)
+    : projectRoot;
   await fs.mkdir(outputDir, { recursive: true });
 
   return { framework, renderer, outputDir };
 }
 
-async function dirExists(p: string) {
-  try { await fs.stat(p); return true; } catch { return false; }
-}

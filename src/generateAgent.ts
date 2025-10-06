@@ -72,7 +72,7 @@ export async function generateWithAgent(
       }
 
       const planJson = JSON.stringify(agentResult.plan);
-      const outPath = resolveOutPath(opts.outDir, item.rel);
+      const outPath = resolveOutPath(opts.projectRoot, opts.outDir, item.rel);
       await fs.mkdir(path.dirname(outPath), { recursive: true });
       if (!opts.force) {
         try {
@@ -163,14 +163,15 @@ export async function generateWithAgent(
   }
 }
 
-function resolveOutPath(outDir: string, rel: string): string {
+function resolveOutPath(projectRoot: string, outDir: string, rel: string): string {
   const relDir = path.dirname(rel);
   const ext = path.extname(rel);
   const normalizedExt = ['.ts', '.tsx', '.js', '.jsx'].includes(ext.toLowerCase()) ? ext : '.ts';
   const baseName = path.basename(rel, ext);
   const testFile = `${baseName}.test${normalizedExt}`;
   const destDir = relDir === '.' ? '' : relDir;
-  return path.join(outDir, destDir, '__tests__', testFile);
+  const baseDir = outDir || projectRoot;
+  return path.join(baseDir, destDir, '__tests__', testFile);
 }
 
 function extractCodeBlock(text: string): string | null {

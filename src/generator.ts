@@ -136,7 +136,8 @@ function resolveOutPath(projectRoot: string, outDir: string, rel: string): strin
   const baseName = path.basename(rel, ext);
   const testFile = `${baseName}.test${normalizedExt}`;
   const destDir = relDir === '.' ? '' : relDir;
-  return path.join(outDir, destDir, '__tests__', testFile);
+  const baseDir = outDir || projectRoot;
+  return path.join(baseDir, destDir, '__tests__', testFile);
 }
 
 function extractCodeBlock(text: string): string | null {
