@@ -8,6 +8,9 @@ import { buildPlanPrompt } from './promptPlan.js';
 import { buildTestsPrompt } from './promptTests.js';
 import { runAgent } from './agent.js';
 import { chunkKey } from './runState.js';
+import { verifyGeneratedTestSource } from './testVerifier.js';
+import { countTests, detectHints } from './testUtils.js';
+import { runGeneratedTestFile } from './testRunner.js';
 
 export async function generateWithAgent(
   model: ModelWrapper,
@@ -23,6 +26,7 @@ export async function generateWithAgent(
     scan: ScanResult;
     onProgress?: (evt: { type: 'start'|'write'|'skip'|'exists'|'tool'|'error'; file: string; chunkId?: string; message?: string }) => void;
     resume?: { completedChunks: Set<string> };
+    maxFixLoops: number;
   }
 ) {
   for (const item of plan.items) {
@@ -67,21 +71,7 @@ export async function generateWithAgent(
         continue;
       }
 
-      const testsPrompt = buildTestsPrompt({
-        relPath: item.rel,
-        codeChunk: chunk.code,
-        testPlanJson: JSON.stringify(agentResult.plan),
-        renderer: opts.renderer,
-        framework: opts.framework
-      });
-
-      const raw = await model.complete(testsPrompt, { maxTokens: 900, temperature: 0.1 });
-      const code = extractCodeBlock(raw);
-      if (!code) {
-        opts.onProgress?.({ type: 'skip', file: item.rel, chunkId: chunk.id, message: 'Model returned no code' });
-        continue;
-      }
-      const formatted = await tryFormat(code);
+      const planJson = JSON.stringify(agentResult.plan);
       const outPath = resolveOutPath(opts.outDir, item.rel);
       await fs.mkdir(path.dirname(outPath), { recursive: true });
       if (!opts.force) {
@@ -91,11 +81,84 @@ export async function generateWithAgent(
           continue;
         } catch {}
       }
-      await fs.writeFile(outPath, formatted, 'utf-8');
 
-      const tests = countTests(formatted);
-      const hints = detectHints(formatted).join(', ');
-      opts.onProgress?.({ type: 'write', file: item.rel, chunkId: chunk.id, message: `${tests}|${hints}` });
+      let previousTest: string | undefined;
+      let failureMessage: string | undefined;
+      let finalFailure = 'Model returned no code';
+      let wrote = false;
+
+      for (let attempt = 1; attempt <= opts.maxFixLoops; attempt++) {
+        const testsPrompt = buildTestsPrompt({
+          relPath: item.rel,
+          codeChunk: chunk.code,
+          testPlanJson: planJson,
+          renderer: opts.renderer,
+          framework: opts.framework,
+          attempt,
+          previousTest,
+          failureMessage,
+        });
+
+        const raw = await model.complete(testsPrompt, { maxTokens: 900, temperature: 0.1 });
+        const code = extractCodeBlock(raw);
+        if (!code) {
+          finalFailure = 'Model returned no code';
+          failureMessage = 'Model returned no code';
+          if (opts.debug) console.warn(`Model returned no code for ${outPath} (attempt ${attempt})`);
+          continue;
+        }
+
+        const formatted = await tryFormat(code);
+        const verification = verifyGeneratedTestSource(formatted, { filePath: outPath });
+        if (verification.diagnostics.length) {
+          finalFailure = verification.diagnostics.join(' | ');
+          failureMessage = `TypeScript diagnostics:\n${verification.diagnostics.join('\n')}`;
+          previousTest = formatted;
+          if (opts.debug) console.warn(`Verification failed for ${outPath} (attempt ${attempt}): ${finalFailure}`);
+          continue;
+        }
+        if (verification.testCount === 0) {
+          finalFailure = 'No tests detected after verification';
+          failureMessage = finalFailure;
+          previousTest = formatted;
+          if (opts.debug) console.warn(`Skipping ${outPath}: ${finalFailure} (attempt ${attempt})`);
+          continue;
+        }
+
+        const finalCode = await tryFormat(verification.code);
+        await fs.writeFile(outPath, finalCode, 'utf-8');
+
+        const runResult = await runGeneratedTestFile({
+          projectRoot: opts.projectRoot,
+          testFilePath: outPath,
+          framework: opts.framework,
+        });
+
+        if (!runResult.ok) {
+          finalFailure = summarizeFailure(runResult.output || 'Test run failed');
+          failureMessage = `${runResult.command}\n${runResult.output}`.trim();
+          previousTest = finalCode;
+          if (opts.debug) console.warn(`Test run failed for ${outPath} (attempt ${attempt}): ${finalFailure}`);
+          if (attempt === opts.maxFixLoops) break;
+          continue;
+        }
+
+        const tests = countTests(finalCode);
+        const hints = detectHints(finalCode).join(', ');
+        opts.onProgress?.({ type: 'write', file: item.rel, chunkId: chunk.id, message: `${tests}|${hints}` });
+        wrote = true;
+        break;
+      }
+
+      if (!wrote) {
+        await fs.rm(outPath, { force: true });
+        opts.onProgress?.({
+          type: 'skip',
+          file: item.rel,
+          chunkId: chunk.id,
+          message: `Failed after ${opts.maxFixLoops} attempts: ${summarizeFailure(finalFailure)}`,
+        });
+      }
     }
   }
 }
@@ -122,15 +185,9 @@ async function tryFormat(code: string): Promise<string> {
   try { return await prettier.format(code, { parser: 'typescript' }); } catch { return code; }
 }
 
-function countTests(ts: string): number {
-  const re = /\bit\s*\(|\btest\s*\(/g;
-  let c = 0; while (re.exec(ts)) c++; return c;
-}
-function detectHints(ts: string): string[] {
-  const hints: string[] = [];
-  if (ts.includes('@testing-library/react-native')) hints.push('RTL native');
-  else if (ts.includes('@testing-library/react')) hints.push('RTL web');
-  if (/msw\b|\bsetupServer\b/.test(ts)) hints.push('MSW');
-  if (/jest\.|vi\./.test(ts)) hints.push('mocks');
-  return hints;
+function summarizeFailure(text: string): string {
+  if (!text) return 'Unknown error';
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const snippet = lines.slice(0, 3).join(' ');
+  return snippet.length > 160 ? `${snippet.slice(0, 157)}…` : snippet;
 }
